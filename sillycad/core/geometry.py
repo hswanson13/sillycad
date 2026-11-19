@@ -37,8 +37,13 @@ def plane_axes(plane: str, offset: float = 0.0) -> gp_Ax3:
     return gp_Ax3(origin, gp_Dir(*normal), gp_Dir(*x_dir))
 
 
-def place_on_plane(shape: TopoDS_Shape, plane: str, offset: float = 0.0) -> TopoDS_Shape:
-    """Move a shape built in sketch coordinates (z = 0) onto a base plane."""
+def plane_trsf(plane: str, offset: float = 0.0) -> gp_Trsf:
+    """Transform from sketch coordinates (z = 0) to a base plane in 3D."""
     trsf = gp_Trsf()
     trsf.SetDisplacement(gp_Ax3(), plane_axes(plane, offset))
-    return BRepBuilderAPI_Transform(shape, trsf, True).Shape()
+    return trsf
+
+
+def place_on_plane(shape: TopoDS_Shape, plane: str, offset: float = 0.0) -> TopoDS_Shape:
+    """Move a shape built in sketch coordinates (z = 0) onto a base plane."""
+    return BRepBuilderAPI_Transform(shape, plane_trsf(plane, offset), True).Shape()

@@ -84,15 +84,15 @@ class _Loops:
         loose = [self.nodes[n] for n, cs in ends.items() if len(cs) == 1]
         if loose:
             raise ProfileError(
-                f"Open profile: {len(loose)} loose end(s), marked in red. "
-                "Join them to other ends (draw onto the point, or add Coincident).",
+                f"Open profile: {len(loose)} loose end(s) (red rings in the sketch). "
+                "Join them to other ends: draw onto the point, or add Coincident.",
                 loose,
             )
         branches = [self.nodes[n] for n, cs in ends.items() if len(cs) > 2]
         if branches:
             raise ProfileError(
-                "More than two edges meet at a point (marked in red). "
-                "Use construction geometry for extra lines.",
+                "More than two edges meet at a point (red ring in the sketch). "
+                "Make the extra lines construction lines.",
                 branches,
             )
         self._walk(ends)
@@ -165,7 +165,9 @@ def _check_crossings(loops: list[list[tuple[TopoDS_Edge, int, int]]]) -> None:
                 spots.append((p.X(), p.Y()))
     if spots:
         raise ProfileError(
-            "The profile crosses itself (marked in red). Edges may only meet at their ends.", spots
+            "The profile crosses itself (red rings in the sketch). "
+            "Edges may only meet at their ends.",
+            spots,
         )
 
 

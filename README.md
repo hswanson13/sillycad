@@ -33,6 +33,17 @@ python -m sillycad
 | Fit all | `F` |
 | Wireframe / shaded | `W` / `S` |
 
+**Main window**
+
+| Action | Key |
+|---|---|
+| New Sketch / Pad / Pocket / Revolve | `N` / `P` / `O` / `R` |
+| Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` |
+| Front / Top / Right / Iso view | `1` / `2` / `3` / `0` |
+| Fit all | `F` |
+
+In the feature tree: double-click to edit (sketches reopen in the sketch editor), `F2` to rename, `Del` to delete, right-click for more. Failed features are red, with the reason shown; the last good body stays on screen.
+
 **Sketch editor**
 
 Click **New Sketch**, pick a plane, and a 2D editor opens. Pick a tool to draw. To constrain, select items and then click a constraint button (or press its key). Every button's tooltip shows its key and what to select. Double-click a dimension to change it.
