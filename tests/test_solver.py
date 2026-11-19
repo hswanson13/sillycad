@@ -7,7 +7,7 @@ import pytest
 from pytest import approx
 
 from sillycad.core.sketch import ORIGIN, X_AXIS, Sketch
-from sillycad.core.solver import solve
+from sillycad.core.solver import drag, solve
 
 
 def rectangle(width: float | None = 40.0, height: float | None = 20.0) -> tuple[Sketch, list[str]]:
@@ -169,3 +169,63 @@ def test_delete_line_removes_its_points_and_constraints() -> None:
     assert gone.p1 not in s.geo and gone.p2 not in s.geo
     for c in s.constraints.values():
         assert not {lines[0], gone.p1, gone.p2} & set(c.refs)
+
+
+def test_drag_free_point_goes_exactly_to_mouse() -> None:
+    s = Sketch()
+    line = s.add_line(0, 0, 10, 0)
+    s.add_constraint("fix", [s.geo[line].p1])
+    assert drag(s, {s.geo[line].p2: (50, 30)})
+    assert s.point(s.geo[line].p2) == approx((50, 30))
+    assert s.point(s.geo[line].p1) == approx((0, 0))
+
+
+def test_drag_slides_along_remaining_freedom() -> None:
+    s, lines = rectangle(height=None)  # width fixed, height free
+    solve(s)
+    corner = s.geo[lines[1]].p2
+    assert drag(s, {corner: (50, 30)})
+    assert s.point(corner) == approx((40, 30))  # x is held by the width, y follows the mouse
+
+
+def test_drag_cannot_move_fully_constrained_point() -> None:
+    s, lines = rectangle()
+    solve(s)
+    corner = s.geo[lines[1]].p2
+    drag(s, {corner: (50, 30)})
+    assert s.point(corner) == approx((40, 20))
+
+
+def test_drag_circle_radius() -> None:
+    s = Sketch()
+    circle = s.add_circle(0, 0, 5)
+    assert drag(s, {}, {circle: 8})
+    assert s.geo[circle].radius == approx(8)
+
+
+def test_duplicate_and_contradictory_constraints_are_refused() -> None:
+    s = Sketch()
+    line = s.add_line(0, 0, 10, 1)
+    s.add_constraint("horizontal", [line])
+    with pytest.raises(ValueError, match="already has a Horizontal"):
+        s.add_constraint("horizontal", [line])
+    with pytest.raises(ValueError, match="both horizontal and vertical"):
+        s.add_constraint("vertical", [line])
+
+
+def test_drag_slides_when_closing_corner_is_on_origin() -> None:
+    """Regression: the walkthrough rectangle (both ends on the origin) must still slide."""
+    s = Sketch()
+    corners = [(0, 0), (60, 0), (60, 20), (0, 20)]
+    lines = [s.add_line(*corners[i], *corners[(i + 1) % 4]) for i in range(4)]
+    s.add_constraint("coincident", [s.geo[lines[0]].p1, ORIGIN])
+    for i in range(3):
+        s.add_constraint("coincident", [s.geo[lines[i + 1]].p1, s.geo[lines[i]].p2])
+    s.add_constraint("coincident", [s.geo[lines[3]].p2, ORIGIN])
+    for line, kind in zip(lines, ["horizontal", "vertical"] * 2, strict=True):
+        s.add_constraint(kind, [line])
+    s.add_constraint("distance", [lines[0]], 60)
+    assert solve(s).dof == 1
+    corner = s.geo[lines[1]].p2
+    assert drag(s, {corner: (67, 34)})
+    assert s.point(corner) == approx((60, 34))

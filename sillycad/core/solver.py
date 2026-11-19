@@ -6,6 +6,7 @@ are fixed parameters (``add_fixed_param``) so the solver can't change them.
 Angles are converted to radians here and nowhere else.
 """
 
+import copy
 import logging
 import math
 from collections.abc import Callable
@@ -17,6 +18,7 @@ from sillycad.core.constants import SOLVER_TOLERANCE
 from sillycad.core.sketch import (
     ORIGIN,
     X_AXIS,
+    XY,
     Y_AXIS,
     Arc,
     Circle,
@@ -30,6 +32,7 @@ from sillycad.core.sketch import (
 log = logging.getLogger(__name__)
 
 _Pair = Callable[[int, int], int]  # a planegcs two-curve constraint method
+_GOOD = (gcs.SolveStatus.Success, gcs.SolveStatus.Converged)
 
 
 @dataclass
@@ -64,8 +67,7 @@ def solve(sketch: Sketch) -> SolveResult:
         diagnosis = system.gcs.diagnose()
         conflicting = system.constraint_ids(diagnosis.conflicting)
         redundant = system.constraint_ids(diagnosis.redundant)
-        good = status in (gcs.SolveStatus.Success, gcs.SolveStatus.Converged)
-        solved = good and not conflicting and system.is_valid()
+        solved = status in _GOOD and not conflicting and system.is_valid()
         if solved:
             system.write_back()
     except Exception as exc:  # planegcs raises on bad input; never crash the app
@@ -76,6 +78,48 @@ def solve(sketch: Sketch) -> SolveResult:
     result = SolveResult(solved, diagnosis.dof, conflicting, redundant)
     result.message = _message(result, sketch)
     return result
+
+
+def drag(sketch: Sketch, points: dict[str, XY], radii: dict[str, float] | None = None) -> bool:
+    """Move points (and circle radii) toward targets while keeping every constraint.
+
+    Pinning the targets exactly works when the geometry is free enough. If
+    that fails, pin only x, or only y, or just start the solver at the
+    targets, and keep whichever lands closest. That way partly constrained
+    geometry slides along whatever freedom it has. Updates the sketch in
+    place and returns True if a good solution was found.
+    """
+    radii = radii or {}
+
+    def gap(s: Sketch) -> float:
+        return sum(math.dist(s.point(p), xy) for p, xy in points.items()) + sum(
+            abs(s.radius(c) - r) for c, r in radii.items()
+        )
+
+    try:
+        exact = _drag_attempt(sketch, points, radii, "xy")
+        tries = [exact] if exact else [_drag_attempt(sketch, points, radii, m) for m in "xy-"]
+    except Exception:  # never crash mid-drag
+        log.exception("Drag solve failed")
+        return False
+    solutions = [t for t in tries if t is not None]
+    if not solutions:
+        return False
+    sketch.geo = min(solutions, key=gap).geo
+    return True
+
+
+def _drag_attempt(
+    sketch: Sketch, points: dict[str, XY], radii: dict[str, float], pins: str
+) -> Sketch | None:
+    """Solve a copy with the targets pinned in ``pins`` ("xy", "x", "y" or "-" for none)."""
+    trial = copy.deepcopy(sketch)
+    system = _System(trial)
+    system.aim(points, radii, pins)
+    if system.gcs.solve() in _GOOD and system.is_valid():
+        system.write_back()
+        return trial
+    return None
 
 
 def _message(result: SolveResult, sketch: Sketch) -> str:
@@ -104,6 +148,7 @@ class _System:
         self.points: dict[str, int] = {}
         self.lines: dict[str, int] = {}
         self.rounds: dict[str, int] = {}  # circles and arcs
+        self.radius_params: dict[str, int] = {}  # circle ID -> its radius parameter
         self.tags: dict[int, str] = {}  # planegcs constraint tag -> our constraint ID
 
         self._add_references()
@@ -131,7 +176,8 @@ class _System:
     def _add_curve(self, c: Curve) -> None:
         g, p = self.gcs, self.points
         if isinstance(c, Circle):
-            self.rounds[c.id] = g.add_circle(p[c.center], g.add_param(c.radius))
+            self.radius_params[c.id] = g.add_param(c.radius)
+            self.rounds[c.id] = g.add_circle(p[c.center], self.radius_params[c.id])
         elif isinstance(c, Arc):
             (cx, cy), (sx, sy) = self.sketch.point(c.center), self.sketch.point(c.start)
             ex, ey = self.sketch.point(c.end)
@@ -211,6 +257,22 @@ class _System:
             a, b, a_arc, b_arc = b, a, b_arc, a_arc  # circle first
         fn = aa if a_arc else (ca if b_arc else cc)
         return fn(self.rounds[a], self.rounds[b])
+
+    def aim(self, points: dict[str, XY], radii: dict[str, float], pins: str) -> None:
+        """Start the solver at the drag targets and pin the coordinates named in ``pins``."""
+        g = self.gcs
+        for pid, (x, y) in points.items():
+            px, py = g.get_point_param_ids(self.points[pid])
+            g.set_param(px, x)
+            g.set_param(py, y)
+            if "x" in pins:
+                g.coordinate_x(self.points[pid], g.add_fixed_param(x))
+            if "y" in pins:
+                g.coordinate_y(self.points[pid], g.add_fixed_param(y))
+        for cid, r in radii.items():
+            g.set_param(self.radius_params[cid], r)
+            if pins != "-":
+                g.circle_radius(self.rounds[cid], g.add_fixed_param(r))
 
     def constraint_ids(self, tags: list[int]) -> list[str]:
         """Our constraint IDs for planegcs tags, without duplicates."""

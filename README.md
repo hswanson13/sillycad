@@ -33,6 +33,25 @@ python -m sillycad
 | Fit all | `F` |
 | Wireframe / shaded | `W` / `S` |
 
+**Sketch editor**
+
+Click **New Sketch**, pick a plane, and a 2D editor opens. Pick a tool to draw. To constrain, select items and then click a constraint button (or press its key). Every button's tooltip shows its key and what to select. Double-click a dimension to change it.
+
+| Draw | Key | Constrain | Key | Dimension | Key |
+|---|---|---|---|---|---|
+| Select / cancel | `Esc` | Coincident | `I` | Distance | `D` |
+| Point | `P` | Horizontal | `H` | Horizontal distance | `Shift+H` |
+| Line | `L` | Vertical | `V` | Vertical distance | `Shift+V` |
+| Arc | `A` | Parallel | `Shift+P` | Angle | `Shift+A` |
+| Circle | `C` | Perpendicular | `N` | Radius | `R` |
+| Construction | `G` | Equal | `E` | Diameter | `Shift+D` |
+| Delete | `Del` | Point on line | `O` | | |
+| Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` | Tangent | `T` | | |
+| Fit view | `Home` | Midpoint | `M` | | |
+| Finish | `Ctrl+Enter` | Fix | `F` | | |
+
+Colors: dark = still free, green = fully constrained, red = conflicting or redundant constraints. Red rings mark profile problems such as loose ends.
+
 ## Test and lint
 
 ```bash

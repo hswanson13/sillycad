@@ -174,6 +174,14 @@ class Sketch:
         self.geo[aid] = Arc(aid, center, start, end, construction)
         return aid
 
+    def toggle_construction(self, ids: list[str]) -> None:
+        """Flip the construction flag of the selected lines, arcs and circles."""
+        curves = [self.geo[i] for i in ids if isinstance(self.geo.get(i), Line | Circle | Arc)]
+        if not curves:
+            raise ValueError("Construction: select lines, arcs or circles first.")
+        for c in curves:
+            c.construction = not c.construction
+
     def delete(self, ids: list[str]) -> None:
         """Delete geometry and everything that depends on it.
 
@@ -246,6 +254,13 @@ class Sketch:
             if value is None:
                 value = self.measure(kind, refs)
             check_value(kind, value)
+        for other in self.constraints.values():
+            if sorted(other.refs) != sorted(refs):
+                continue
+            if other.kind == kind:
+                raise ValueError(f"That already has a {label(kind)} constraint.")
+            if {other.kind, kind} == {"horizontal", "vertical"}:
+                raise ValueError("Can't be both horizontal and vertical (it'd shrink to a dot).")
         cid = self.new_id("k")
         self.constraints[cid] = Constraint(cid, kind, refs, value)
         return cid
