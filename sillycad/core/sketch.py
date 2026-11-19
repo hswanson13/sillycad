@@ -34,6 +34,7 @@ class Line:
 
     @property
     def points(self) -> list[str]:
+        """IDs of the points this curve owns."""
         return [self.p1, self.p2]
 
 
@@ -46,6 +47,7 @@ class Circle:
 
     @property
     def points(self) -> list[str]:
+        """IDs of the points this curve owns."""
         return [self.center]
 
 
@@ -61,6 +63,7 @@ class Arc:
 
     @property
     def points(self) -> list[str]:
+        """IDs of the points this curve owns."""
         return [self.center, self.start, self.end]
 
 

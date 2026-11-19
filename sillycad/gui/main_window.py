@@ -10,13 +10,16 @@ import logging
 import os
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 from OCC.Core.TopAbs import TopAbs_FACE
 from OCC.Core.TopoDS import TopoDS_Face, TopoDS_Shape, topods
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QFont, QKeySequence, QUndoStack
+from PySide6.QtGui import QAction, QCloseEvent, QFont, QKeySequence, QUndoStack
 from PySide6.QtWidgets import QApplication, QDockWidget, QFileDialog, QMainWindow, QMessageBox
 
+from sillycad.core import fileio
+from sillycad.core.constants import STL_ANGULAR_DEFLECTION, STL_LINEAR_DEFLECTION
 from sillycad.core.document import Document, Model, recompute
 from sillycad.core.export import export_stl
 from sillycad.core.features import (
@@ -30,7 +33,7 @@ from sillycad.core.features import (
 from sillycad.core.geometry import Placement, outline_in_plane, volume
 from sillycad.core.sketch import XY, Sketch
 from sillycad.gui.commands import SnapshotCommand
-from sillycad.gui.dialogs import FeatureDialog, SketchPlaneDialog
+from sillycad.gui.dialogs import FeatureDialog, SketchPlaneDialog, StlDialog
 from sillycad.gui.feature_tree import FeatureTree
 from sillycad.gui.sketch_editor import SketchEditor
 from sillycad.gui.viewer import Viewer
@@ -46,10 +49,12 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("SillyCAD")
         self.doc = Document()
         self.model = Model(None, {})
         self.undo_stack = QUndoStack(self)
+        self.undo_stack.cleanChanged.connect(lambda _clean: self._update_title())
+        self.path: Path | None = None  # where the document is saved
+        self.stl_settings = (STL_LINEAR_DEFLECTION, STL_ANGULAR_DEFLECTION)
         self.picked_face: TopoDS_Face | None = None  # clicked in the 3D view, to sketch on
 
         self.viewer = Viewer(self)
@@ -66,6 +71,7 @@ class MainWindow(QMainWindow):
         dock.setMinimumWidth(260)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
         self._build_actions()
+        self._update_title()
 
     # ── Menus and toolbar ───────────────────────────────────────────
 
@@ -110,7 +116,14 @@ class MainWindow(QMainWindow):
             toggle.setChecked(True)
 
         file_menu = self.menuBar().addMenu("&File")
-        file_menu.addAction(self._action("Export &STL…", self.export_stl))
+        file_menu.addActions([
+            self._action("&New", self.new_document, "Ctrl+N", "Start a new part"),
+            self._action("&Open…", self.open_document, "Ctrl+O", "Open a .sillycad file"),
+            self._action("&Save", self.save, "Ctrl+S", "Save the part"),
+            self._action("Save &As…", self.save_as, "Ctrl+Shift+S", "Save under a new name"),
+        ])  # fmt: skip
+        file_menu.addSeparator()
+        file_menu.addAction(self._action("Export &STL…", self.export_stl, "Ctrl+E"))
         file_menu.addSeparator()
         quit_action = file_menu.addAction("&Quit")
         quit_action.setShortcut(QKeySequence.StandardKey.Quit)
@@ -319,18 +332,108 @@ class MainWindow(QMainWindow):
 
         self.change(f"Move {f.name}", move)
 
+    # ── Files ───────────────────────────────────────────────────────
+
+    def _update_title(self) -> None:
+        name = self.path.name if self.path else "Untitled"
+        unsaved = "" if self.undo_stack.isClean() else " *"
+        self.setWindowTitle(f"{name}{unsaved} — SillyCAD")
+
+    def _set_document(self, doc: Document, path: Path | None) -> None:
+        self.doc, self.path = doc, path
+        self.undo_stack.clear()
+        self.model = Model(None, {})
+        self.recompute(fit=True)
+        self._update_title()
+
+    def maybe_save(self) -> bool:
+        """Offer to save unsaved changes. Returns False if the user cancels."""
+        if self.undo_stack.isClean():
+            return True
+        buttons = QMessageBox.StandardButton
+        answer = QMessageBox.question(
+            self, "Unsaved changes",
+            f"Save changes to {self.path.name if self.path else 'this part'}?",
+            buttons.Save | buttons.Discard | buttons.Cancel, buttons.Save,
+        )  # fmt: skip
+        if answer == buttons.Save:
+            return self.save()
+        return answer == buttons.Discard
+
+    def new_document(self) -> None:
+        if self.maybe_save():
+            self._set_document(Document(), None)
+
+    def open_document(self) -> None:
+        if not self.maybe_save():
+            return
+        folder = str(self.path.parent if self.path else Path.cwd())
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open", folder, f"SillyCAD (*{fileio.SUFFIX});;All files (*)"
+        )
+        if path:
+            self.open_path(Path(path))
+
+    def open_path(self, path: Path) -> None:
+        try:
+            doc = fileio.load(path)
+        except ValueError as exc:
+            QMessageBox.critical(self, "Can't open file", f"{path.name}: {exc}")
+            return
+        self._set_document(doc, path)
+
+    def save(self) -> bool:
+        """Save to the current file (asks for a name the first time). True if saved."""
+        return self._write(self.path) if self.path else self.save_as()
+
+    def save_as(self) -> bool:
+        start = str(self.path or Path.cwd() / f"part{fileio.SUFFIX}")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save As", start, f"SillyCAD (*{fileio.SUFFIX})"
+        )
+        if not path:
+            return False
+        path = Path(path)
+        if path.suffix != fileio.SUFFIX:
+            path = path.with_name(path.name + fileio.SUFFIX)
+        return self._write(path)
+
+    def _write(self, path: Path) -> bool:
+        try:
+            fileio.save(self.doc, path)
+        except OSError as exc:
+            QMessageBox.critical(self, "Save failed", f"Couldn't save {path.name}: {exc}")
+            return False
+        self.path = path
+        self.undo_stack.setClean()
+        self._update_title()
+        self.statusBar().showMessage(f"Saved {path}")
+        return True
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if not self.maybe_save():
+            event.ignore()
+            return
+        self.undo_stack.cleanChanged.disconnect()  # no title updates while Qt tears down
+        event.accept()
+
     def export_stl(self) -> None:
-        """Ask for a file name and export the body as binary STL."""
+        """Ask for quality settings and a file name, then export the body as binary STL."""
         if self.model.shape is None:
             QMessageBox.information(self, "Export STL", "There's no solid to export yet.")
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Export STL", "model.stl", "STL (*.stl)")
+        dialog = StlDialog(self, *self.stl_settings)
+        if not dialog.exec():
+            return
+        self.stl_settings = dialog.values()
+        start = str(self.path.with_suffix(".stl") if self.path else Path.cwd() / "part.stl")
+        path, _ = QFileDialog.getSaveFileName(self, "Export STL", start, "STL (*.stl)")
         if not path:
             return
         if not path.lower().endswith(".stl"):
             path += ".stl"
         try:
-            count = export_stl(self.model.shape, path)
+            count = export_stl(self.model.shape, path, *self.stl_settings)
         except Exception as exc:  # OCCT errors surface here
             log.exception("STL export failed")
             QMessageBox.critical(self, "Export failed", str(exc))
@@ -355,4 +458,6 @@ def run() -> int:
     window.show()
     window.viewer.init()
     window.recompute(fit=True)
+    if len(sys.argv) > 1:  # python -m sillycad part.sillycad
+        window.open_path(Path(sys.argv[1]))
     return app.exec()

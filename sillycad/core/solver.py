@@ -52,6 +52,7 @@ class SolveResult:
 
     @property
     def fully_constrained(self) -> bool:
+        """Solved with no problems and zero degrees of freedom."""
         return self.ok and self.dof == 0
 
 

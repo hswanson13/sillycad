@@ -33,10 +33,14 @@ python -m sillycad
 | Fit all | `F` |
 | Wireframe / shaded | `W` / `S` |
 
+Open a file directly with `python -m sillycad part.sillycad`.
+
 **Main window**
 
 | Action | Key |
 |---|---|
+| New / Open / Save / Save As | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` |
+| Export STL (asks for quality) | `Ctrl+E` |
 | New Sketch / Pad / Pocket / Revolve | `N` / `P` / `O` / `R` |
 | Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` |
 | Front / Top / Right / Iso view | `1` / `2` / `3` / `0` |
@@ -72,6 +76,10 @@ pytest
 ruff check .
 ruff format .
 ```
+
+## Files
+
+Parts are saved as `.sillycad` files: readable JSON with a `format_version`, holding the feature list (sketches with their geometry and constraints, pads, pockets, revolves). Units are millimetres and degrees. The 3D shape isn't stored; it's rebuilt when the file opens. STL is export-only (binary).
 
 ## Layout
 

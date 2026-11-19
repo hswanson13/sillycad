@@ -2,9 +2,9 @@
 
 # SillyCAD Progress
 
-**Where we are:** sketching on faces is done. Starting M5 (the last one).
+**Where we are:** 🎉 All done: M1–M5 plus sketching on faces. 53 tests pass.
 
-**Needs you:** nothing right now. Try "Sketch on a face" below whenever you like.
+**Needs you:** try M5 (and "Sketch on a face" if you haven't yet), and tell me what you'd like next.
 
 Legend: ✅ done · 🔨 in progress · ⬜ not started
 
@@ -70,14 +70,18 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 
 **Good to know:** the sketch remembers the face's *plane*, not the face itself (see Decisions). If you later make the part taller, a sketch that was on the old top stays at the old height. Right-click it, choose **Change plane…** with the new top face picked, and it moves up.
 
-## ⬜ M5: Save and polish
+## ✅ M5: Save and polish
 
 **You'll be able to:** save, reopen, undo anything, and export with settings.
 
-- [ ] Save / Open (`.sillycad` file, plain JSON)
-- [ ] File menu: New, Open, Save, Save As, and a warning about unsaved changes
-- [ ] STL export dialog (quality settings with good defaults)
-- [ ] Test: save, open, recompute gives the same volume
+- [x] Save / Open (`.sillycad` file: readable JSON with a `format_version`)
+- [x] File menu: New, Open, Save, Save As (`Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S`)
+- [x] Window title shows the file name and a `*` when there are unsaved changes; New, Open and Quit offer to save
+- [x] STL export dialog (`Ctrl+E`): linear / angular deflection, defaults 0.1 mm / 15°, remembers your last choice
+- [x] `python -m sillycad part.sillycad` opens a file directly
+- [x] Saving can't leave a half-written file (writes a temp file, then swaps it in)
+- [x] Polite errors for files from a newer version, or broken files
+- [x] Tests: save, open, recompute gives the same volume, and everything survives the round trip (53 tests total)
 
 ---
 
@@ -188,6 +192,23 @@ You'll see the three base planes (blue XY, green XZ, red YZ) and the origin axes
 6. Now click the **front face**, then New Sketch. You get **XZ** (the front plane). Draw a rectangle on the face and **Pad** it 5 mm: it sticks out of the front.
 7. Try the **bottom face** (orbit underneath, or press `0` then drag the view): the dialog says **Picked face**. A Pad there grows downward, out of the part.
 
+### M5
+
+```bash
+conda activate sillycad
+python -m sillycad
+```
+
+1. Make any part (or the M4 block with a hole). The title says **Untitled \*** because it isn't saved yet.
+2. `Ctrl+S` and save it as `bracket`. It becomes `bracket.sillycad` and the `*` goes away.
+3. Change something (double-click Pad1, new length). The `*` comes back. `Ctrl+N`: it asks to save first. Choose **Discard**.
+4. `Ctrl+O` and open `bracket.sillycad`. Everything is back, sketches and constraints included. Double-click a sketch: the dimensions are still there and still editable.
+5. Close the window with unsaved changes. It asks first; **Cancel** keeps you working.
+6. `Ctrl+E` (File → Export STL…). Try the defaults, then again with 0.01 mm / 5°: smoother circles, more triangles (the status bar shows the count).
+7. From a terminal: `python -m sillycad bracket.sillycad` opens it straight away.
+8. Peek inside `bracket.sillycad` with any text editor: it's readable JSON.
+9. Run `pytest`. All 53 should pass.
+
 ## Decisions
 
 - **Undo/redo:** each command saves a snapshot of the document before and after. Simple and hard to break.
@@ -203,7 +224,7 @@ You'll see the three base planes (blue XY, green XZ, red YZ) and the origin axes
 - **Plane directions:** XY faces +Z, XZ faces −Y (the front), YZ faces +X (the right), matching the Front/Top/Right views.
 - **Sketch on a face:** the spec ruled this out to avoid the topological naming problem (a reference to "face #7" breaks when the part changes). So picking a face only *reads* its plane once. A plane parallel to a base plane is stored as base plane + offset; any other (slanted, or facing down/back) is stored as its own plane. No sketch ever points at a face, so nothing can break. The trade-off: a sketch doesn't follow its face if that face moves later.
 - **Main window undo** came early (M4 instead of M5) because the snapshot undo from the sketch editor made it nearly free.
-- **File format:** `.sillycad` is plain JSON with a `format_version` field.
+- **File format:** `.sillycad` is readable JSON with a `format_version` field. Every object has a `type` (`sketch`, `pad`, `line`, …). The 3D shape is never saved; it's rebuilt from the features on open. Unknown fields are refused (rather than silently dropped), and a file from a newer version is refused with a clear message.
 - **Wayland:** the app sets `QT_QPA_PLATFORM=xcb` (XWayland), because OCCT's viewer needs an X11 window.
 - **Font:** the whole UI uses Comic Sans, falling back to Comic Neue or a cursive font if it isn't installed.
 

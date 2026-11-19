@@ -165,3 +165,27 @@ def _buttons(dialog: QDialog) -> QDialogButtonBox:
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
     return buttons
+
+
+class StlDialog(QDialog):
+    """STL export quality. Smaller numbers give a smoother, bigger file."""
+
+    def __init__(self, parent: QWidget | None, linear: float, angular: float) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Export STL")
+        form = QFormLayout(self)
+        self.linear = _number_box(linear, 0.001, 10, " mm")
+        self.linear.setToolTip("How far the triangles may stray from the true surface.")
+        self.angular = _number_box(angular, 1, 45, "°")
+        self.angular.setToolTip("How sharply neighbouring triangles may bend on curves.")
+        form.addRow("Linear deflection:", self.linear)
+        form.addRow("Angular deflection:", self.angular)
+        hint = QLabel("Smaller = smoother curves and a bigger file. The defaults suit 3D printing.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: gray;")
+        form.addRow(hint)
+        form.addRow(_buttons(self))
+
+    def values(self) -> tuple[float, float]:
+        """(linear deflection in mm, angular deflection in degrees)."""
+        return self.linear.value(), self.angular.value()

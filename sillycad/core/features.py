@@ -50,6 +50,7 @@ class SketchFeature:
     face: Placement | None = None  # only for plane == "Face"
 
     def placement(self) -> Placement:
+        """The plane this sketch lives on."""
         if self.plane == "Face" and self.face is not None:
             return self.face
         return BASE_PLANES[self.plane]
@@ -71,6 +72,7 @@ class SketchFeature:
         ]
 
     def normal(self) -> gp_Vec:
+        """Unit normal of the sketch plane (Pad direction)."""
         return gp_Vec(*self.placement().normal)
 
 
@@ -174,6 +176,7 @@ def revolve_axis(sketch: Sketch, axis: str) -> tuple[XY, XY]:
 
 
 def fuse_all(shapes: list[TopoDS_Shape]) -> TopoDS_Shape:
+    """Fuse shapes into one."""
     result = shapes[0]
     for shape in shapes[1:]:
         result = BRepAlgoAPI_Fuse(result, shape).Shape()

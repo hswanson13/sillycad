@@ -57,6 +57,7 @@ class Document:
         return f"{kind}{n}"
 
     def find(self, fid: str) -> Feature | None:
+        """The feature with this ID, or None."""
         return next((f for f in self.features if f.id == fid), None)
 
     def sketches(self, before: str | None = None) -> list[SketchFeature]:
