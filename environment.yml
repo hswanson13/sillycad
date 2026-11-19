@@ -1,0 +1,12 @@
+name: sillycad
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pythonocc-core
+  - pyside6
+  - pytest
+  - ruff
+  - pip
+  - pip:
+      - planegcs
