@@ -51,6 +51,7 @@ DONE = QColor("#1b8a3c")  # fully constrained
 BAD = QColor("#d62828")  # conflicting / redundant / profile problem
 PICKED = QColor("#ff7f00")  # selected
 HOVER = QColor("#2f80ed")  # under the mouse, and previews
+REFERENCE = QColor("#9aa3b2")  # outline of the face being sketched on
 
 
 class SketchView(QGraphicsView):
@@ -73,6 +74,7 @@ class SketchView(QGraphicsView):
         self.clicks: list[tuple[XY, str | None]] = []  # placed points + what each snapped to
         self.mouse: XY = (0.0, 0.0)
         self.hover: str | None = None
+        self.snap: tuple[XY, str | None] | None = None  # where a drawing click would snap to
         self._pan_from: QPointF | None = None
         self._press: tuple[QPointF, XY, str] | None = None  # view pos, sketch pos, picked ID
         self._drag_start: Sketch | None = None
@@ -88,9 +90,12 @@ class SketchView(QGraphicsView):
         return (p.x(), p.y())
 
     def fit(self) -> None:
-        """Zoom to show the whole sketch (or ±50 mm around the origin if it's empty)."""
+        """Zoom to show the sketch and the face outline (or ±50 mm if there's nothing)."""
         s = self.editor.sketch
         xs, ys = [-10.0, 10.0], [-10.0, 10.0]
+        for polyline in self.editor.reference:
+            xs += [x for x, _ in polyline]
+            ys += [y for _, y in polyline]
         for g in s.geo.values():
             if isinstance(g, Point):
                 xs.append(g.x)
@@ -136,12 +141,22 @@ class SketchView(QGraphicsView):
                 best, best_d = axis, d
         return best
 
-    def snapped(self, view_pos: QPointF) -> tuple[XY, str | None]:
-        """Mouse position, snapped to a nearby existing point (returned too)."""
+    def snap_target(self, view_pos: QPointF) -> tuple[XY, str | None] | None:
+        """A nearby sketch point (position and ID), or a corner of the face outline
+        (position only: it's a guide, not sketch geometry). None if nothing is close."""
         pid = self.pick(view_pos, points_only=True)
         if pid:
             return self.editor.sketch.point(pid), pid
-        return self.to_sketch(view_pos), None
+        mouse, tol = self.to_sketch(view_pos), PICK_PX / self.zoom()
+        for polyline in self.editor.reference:
+            for corner in (polyline[0], polyline[-1]):
+                if math.dist(mouse, corner) < tol:
+                    return corner, None
+        return None
+
+    def snapped(self, view_pos: QPointF) -> tuple[XY, str | None]:
+        """Mouse position, snapped to a nearby point if there is one."""
+        return self.snap_target(view_pos) or (self.to_sketch(view_pos), None)
 
     # ── Mouse and keys ──────────────────────────────────────────────
 
@@ -184,8 +199,12 @@ class SketchView(QGraphicsView):
             if self._drag_start is not None:
                 self._drag_to(self.mouse)
             return
-        hover = self.pick(pos, points_only=self.tool != "select")
-        if hover != self.hover or self.tool != "select":
+        if self.tool != "select":
+            self.snap = self.snap_target(pos)
+            self.redraw()
+            return
+        hover = self.pick(pos)
+        if hover != self.hover:
             self.hover = hover
             self.redraw()
 
@@ -314,6 +333,12 @@ class SketchView(QGraphicsView):
         ):
             painter.setPen(self._pen(axis, color, width=1.5))
             painter.drawLine(line)
+        if self.editor.reference:  # outline of the face being sketched on: a grey guide
+            guide = QPen(REFERENCE, 1.5)
+            guide.setCosmetic(True)
+            painter.setPen(guide)
+            for polyline in self.editor.reference:
+                painter.drawPolyline([QPointF(x, y) for x, y in polyline])
 
     def redraw(self) -> None:
         """Rebuild the scene from the model."""
@@ -337,10 +362,9 @@ class SketchView(QGraphicsView):
     def _draw_preview(self) -> None:
         if self.tool == "select":
             return
-        mouse, snap = self.mouse, None
-        if self.hover:
-            mouse, snap = self.editor.sketch.point(self.hover), self.hover
-        if snap:
+        mouse = self.mouse
+        if self.snap:
+            mouse = self.snap[0]
             self._ring(mouse, HOVER)
         pts = [p for p, _ in self.clicks] + [mouse]
         pen = QPen(HOVER, 0, Qt.PenStyle.DashLine)

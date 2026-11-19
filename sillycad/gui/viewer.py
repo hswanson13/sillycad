@@ -1,9 +1,12 @@
 """3D viewport built on pythonocc's Qt viewer widget.
 
 Mouse: left-drag orbits, middle-drag pans, right-drag or wheel zooms.
+A left click (without dragging) picks a face; ``sig_topods_selected`` reports it.
 """
 
 from OCC.Display.backend import load_backend
+from PySide6.QtCore import QPointF, Qt
+from PySide6.QtGui import QMouseEvent
 
 load_backend("pyside6")  # must run before importing qtDisplay
 
@@ -17,7 +20,7 @@ from OCC.Core.TopoDS import TopoDS_Shape  # noqa: E402
 from OCC.Display.OCCViewer import rgb_color  # noqa: E402
 from OCC.Display.qtDisplay import qtViewer3d  # noqa: E402
 
-from sillycad.core.geometry import plane_axes, plane_trsf  # noqa: E402
+from sillycad.core.geometry import BASE_PLANES, plane_axes, plane_trsf  # noqa: E402
 
 SKETCH_COLOR = rgb_color(0.1, 0.3, 1.0)
 PLANE_COLORS = {"XY": (0.25, 0.45, 0.95), "XZ": (0.25, 0.7, 0.3), "YZ": (0.9, 0.3, 0.3)}
@@ -29,6 +32,21 @@ class Viewer(qtViewer3d):
     def init(self) -> None:
         """Create the OCCT viewer. Needs a real native window, so call after show()."""
         self.InitDriver()
+        self._press_at: QPointF | None = None
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        self._press_at = event.position()
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        dragged = (
+            self._press_at is not None and (event.position() - self._press_at).manhattanLength() > 4
+        )
+        if event.button() == Qt.MouseButton.LeftButton and dragged:
+            self._on_left_release()  # that was an orbit, not a click: don't pick anything
+            self.cursor = "arrow"
+            return
+        super().mouseReleaseEvent(event)
 
     def show_model(
         self,
@@ -52,17 +70,20 @@ class Viewer(qtViewer3d):
             display.DisplayShape(wires, color=SKETCH_COLOR, update=False)
         if fit:
             display.FitAll()
+        display.SetSelectionModeFace()  # clicks pick faces (to sketch on)
         display.Repaint()
 
     def _show_planes(self, size: float) -> None:
         for name, color in PLANE_COLORS.items():
-            face = BRepBuilderAPI_MakeFace(gp_Pln(plane_axes(name)), 0, size, 0, size).Face()
+            face = BRepBuilderAPI_MakeFace(
+                gp_Pln(plane_axes(BASE_PLANES[name])), 0, size, 0, size
+            ).Face()
             self._display.DisplayShape(
                 face, color=rgb_color(*color), transparency=0.85, update=False
             )
             label = AIS_TextLabel()
             label.SetText(name)
-            label.SetPosition(gp_Pnt(size, size, 0).Transformed(plane_trsf(name)))
+            label.SetPosition(gp_Pnt(size, size, 0).Transformed(plane_trsf(BASE_PLANES[name])))
             label.SetColor(rgb_color(*color))
             label.SetHeight(16)
             self._display.Context.Display(label, False)

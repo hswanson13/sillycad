@@ -152,6 +152,6 @@ def _through_all_length(body: TopoDS_Shape, sk: SketchFeature) -> float:
     box = Bnd_Box()
     brepbndlib.Add(body, box)
     x0, y0, z0, x1, y1, z1 = box.Get()
-    origin = plane_axes(sk.plane, sk.offset).Location()
+    origin = plane_axes(sk.placement(), sk.offset).Location()
     corners = [(x, y, z) for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)]
     return max(math.dist((origin.X(), origin.Y(), origin.Z()), c) for c in corners) + 1.0

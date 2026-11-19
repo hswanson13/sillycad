@@ -4,11 +4,14 @@ import math
 
 from OCC.Core.Bnd import Bnd_Box
 from OCC.Core.BRepBndLib import brepbndlib
+from OCC.Core.TopAbs import TopAbs_FACE
+from OCC.Core.TopExp import TopExp_Explorer
+from OCC.Core.TopoDS import topods
 from pytest import approx
 
 from sillycad.core.document import Document, recompute
-from sillycad.core.features import Pad, Pocket, Revolve, SketchFeature
-from sillycad.core.geometry import volume
+from sillycad.core.features import Pad, Pocket, Revolve, SketchFeature, plane_from_face
+from sillycad.core.geometry import BASE_PLANES, face_placement, outline_in_plane, volume
 from sillycad.core.sketch import Sketch
 
 
@@ -144,3 +147,76 @@ def test_delete_sketch_also_deletes_features_built_from_it() -> None:
     doc.delete(sketch_id)
     assert doc.features == []
     assert recompute(doc).shape is None
+
+
+# ── Sketching on faces ──────────────────────────────────────────────
+
+
+def face_facing(shape, normal: tuple[float, float, float]):  # noqa: ANN001, ANN201
+    """The first flat face of ``shape`` whose outward normal is ``normal``."""
+    explorer = TopExp_Explorer(shape, TopAbs_FACE)
+    while explorer.More():
+        face = topods.Face(explorer.Current())
+        try:
+            if face_placement(face).normal == approx(normal, abs=1e-6):
+                return face
+        except ValueError:
+            pass  # curved face
+        explorer.Next()
+    raise AssertionError(f"no face facing {normal}")
+
+
+def test_top_face_becomes_xy_with_offset() -> None:
+    top = face_facing(recompute(padded_block()).shape, (0, 0, 1))
+    assert plane_from_face(top) == ("XY", 10.0, None)
+
+
+def test_side_faces_match_base_planes_or_keep_their_own() -> None:
+    shape = recompute(padded_block()).shape
+    assert plane_from_face(face_facing(shape, (0, -1, 0))) == ("XZ", 0.0, None)  # front
+    assert plane_from_face(face_facing(shape, (1, 0, 0))) == ("YZ", 40.0, None)  # right
+    plane, _, face = plane_from_face(face_facing(shape, (0, 1, 0)))  # back faces the other way
+    assert plane == "Face"
+    assert face.x_dir == (-1, 0, 0)  # seen from behind, sketch x points to world -X, y is up
+
+
+def test_pad_on_bottom_face_grows_outward() -> None:
+    doc = padded_block()
+    plane, offset, face = plane_from_face(face_facing(recompute(doc).shape, (0, 0, -1)))
+    assert plane == "Face" and face.normal == (0, 0, -1)
+    # On the bottom face, sketch y points to world -Y, so the block is at negative sketch y.
+    sketch = SketchFeature(doc.new_id(), "Bottom", plane, offset, rect(0, -10, 10, 0), face)
+    doc.features.append(sketch)
+    add(doc, Pad, sketch.id, length=5)
+    model = recompute(doc)
+    assert not model.errors
+    assert volume(model.shape) == approx(8000 + 500)
+    assert bounds(model.shape)[2] == approx(-5)  # grew downward, out of the material
+
+
+def test_pad_on_slanted_face() -> None:
+    doc = Document()
+    triangle = Sketch()
+    for a, b in [((0, 0), (20, 0)), ((20, 0), (0, 20)), ((0, 20), (0, 0))]:
+        triangle.add_line(*a, *b)
+    add(doc, Pad, add_sketch(doc, triangle), length=10)  # 2000 mm³ wedge
+    slanted = face_facing(recompute(doc).shape, (math.sqrt(0.5), math.sqrt(0.5), 0))
+    plane, offset, face = plane_from_face(slanted)
+    assert plane == "Face"
+    # Sketch origin is the world origin projected onto the face: world (10, 10, 0).
+    # Sketch y is world up, so the face's middle (world z = 5) is at sketch (0, 5).
+    sketch = SketchFeature(doc.new_id(), "OnSlope", plane, offset, rect(-5, 2, 5, 8), face)
+    doc.features.append(sketch)
+    add(doc, Pad, sketch.id, length=3)
+    model = recompute(doc)
+    assert not model.errors
+    assert volume(model.shape) == approx(2000 + 60 * 3)
+
+
+def test_outline_of_the_face_being_sketched_on() -> None:
+    shape = recompute(padded_block()).shape
+    lines = outline_in_plane(shape, BASE_PLANES["XY"], 10)  # the top face
+    assert len(lines) == 4
+    corners = {(round(x, 6), round(y, 6)) for line in lines for x, y in (line[0], line[-1])}
+    assert corners == {(0, 0), (40, 0), (40, 20), (0, 20)}
+    assert outline_in_plane(shape, BASE_PLANES["XY"], 5) == []  # nothing lies at mid-height

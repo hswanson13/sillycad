@@ -19,10 +19,17 @@ from sillycad.core.sketch import Line
 
 
 class SketchPlaneDialog(QDialog):
-    """Choose the base plane and offset for a sketch."""
+    """Choose the plane and offset for a sketch.
+
+    ``has_face`` adds a "Picked face" choice: the plane of a face clicked in 3D.
+    """
 
     def __init__(
-        self, parent: QWidget | None = None, plane: str = "XY", offset: float = 0.0
+        self,
+        parent: QWidget | None = None,
+        plane: str = "XY",
+        offset: float = 0.0,
+        has_face: bool = False,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Sketch plane")
@@ -30,10 +37,15 @@ class SketchPlaneDialog(QDialog):
         self.plane = QComboBox()
         for key, text in (("XY", "XY (top)"), ("XZ", "XZ (front)"), ("YZ", "YZ (right)")):
             self.plane.addItem(text, key)
-        self.plane.setCurrentIndex(self.plane.findData(plane))
+        if has_face:
+            self.plane.addItem("Picked face", "Face")
+        self.plane.setCurrentIndex(max(0, self.plane.findData(plane)))
         self.offset = _number_box(offset, -100000, 100000, " mm")
         form.addRow("Plane:", self.plane)
         form.addRow("Offset:", self.offset)
+        hint = QLabel("Tip: click a flat face in the 3D view first to sketch on it.")
+        hint.setStyleSheet("color: gray;")
+        form.addRow(hint)
         form.addRow(_buttons(self))
 
     def values(self) -> tuple[str, float]:

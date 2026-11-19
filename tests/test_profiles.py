@@ -8,7 +8,7 @@ from OCC.Core.GProp import GProp_GProps
 from pytest import approx
 
 from sillycad.core.features import SketchFeature
-from sillycad.core.geometry import place_on_plane
+from sillycad.core.geometry import BASE_PLANES, place_on_plane
 from sillycad.core.profiles import ProfileError, find_profiles
 from sillycad.core.sketch import Sketch
 
@@ -103,7 +103,7 @@ def test_sketch_planes(plane: str, expected: tuple[float, float, float]) -> None
     from OCC.Core.TopoDS import topods
 
     vertex = BRepBuilderAPI_MakeVertex(gp_Pnt(3, 4, 0)).Vertex()
-    p = BRep_Tool.Pnt(topods.Vertex(place_on_plane(vertex, plane, 7)))
+    p = BRep_Tool.Pnt(topods.Vertex(place_on_plane(vertex, BASE_PLANES[plane], 7)))
     assert (p.X(), p.Y(), p.Z()) == approx(expected)
 
 

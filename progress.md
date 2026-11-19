@@ -2,9 +2,9 @@
 
 # SillyCAD Progress
 
-**Where we are:** M4 is done. Waiting for you to try it (see "How to try it" below).
+**Where we are:** sketching on faces is done. Starting M5 (the last one).
 
-**Needs you:** make a part or two and tell me how it goes. Then I'll start M5 (the last one).
+**Needs you:** nothing right now. Try "Sketch on a face" below whenever you like.
 
 Legend: ✅ done · 🔨 in progress · ⬜ not started
 
@@ -57,6 +57,18 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 - [x] Undo / redo for everything in the main window (moved up from M5)
 - [x] Body volume in the status bar
 - [x] Tests: pad = 8000 mm³, pocket, revolve (annulus, cylinder, half), and the error cases (44 tests total)
+
+## ✅ Extra: Sketch on a face (you asked for this one)
+
+**You'll be able to:** click a flat face of the part and sketch right on it.
+
+- [x] Click a face in 3D (dragging still just orbits), then **New Sketch**: the dialog suggests that face's plane
+- [x] Works on any flat face: top, bottom, sides, slanted. Pads grow out of the face; pockets cut into it
+- [x] The face's outline shows in the sketch editor as a grey guide, and you can snap to its corners
+- [x] **Change plane…** (right-click a sketch) can move a sketch onto a picked face too
+- [x] Tests: top/side faces become "XY/XZ/YZ + offset", bottom and slanted faces work, outline found (49 tests total)
+
+**Good to know:** the sketch remembers the face's *plane*, not the face itself (see Decisions). If you later make the part taller, a sketch that was on the old top stays at the old height. Right-click it, choose **Change plane…** with the new top face picked, and it moves up.
 
 ## ⬜ M5: Save and polish
 
@@ -166,6 +178,16 @@ You'll see the three base planes (blue XY, green XZ, red YZ) and the origin axes
 8. **File → Export STL…** now exports the real body.
 9. Run `pytest`. All 44 should pass.
 
+### Sketch on a face
+
+1. Make the 40 × 20 × 10 block from M4 (or open your own part).
+2. Turn off **Show Planes** so they're out of the way. **Click the top face**: it lights up, and the status bar says "Face picked".
+3. Click **New Sketch** (`N`). The dialog already says **XY, offset 10**. Click OK.
+4. The face's outline is drawn in grey. Draw a circle inside it (click near a corner of the outline and it snaps there). Finish.
+5. **Pocket** it: the hole starts at the top face.
+6. Now click the **front face**, then New Sketch. You get **XZ** (the front plane). Draw a rectangle on the face and **Pad** it 5 mm: it sticks out of the front.
+7. Try the **bottom face** (orbit underneath, or press `0` then drag the view): the dialog says **Picked face**. A Pad there grows downward, out of the part.
+
 ## Decisions
 
 - **Undo/redo:** each command saves a snapshot of the document before and after. Simple and hard to break.
@@ -179,6 +201,7 @@ You'll see the three base planes (blue XY, green XZ, red YZ) and the origin axes
 - **One body:** a feature that would leave the body in separate pieces fails with a clear message, instead of silently making two solids.
 - **Pocket direction:** by default a pocket cuts against the sketch's normal, into the material (so a sketch on top of a block cuts down). "Reversed" flips it.
 - **Plane directions:** XY faces +Z, XZ faces −Y (the front), YZ faces +X (the right), matching the Front/Top/Right views.
+- **Sketch on a face:** the spec ruled this out to avoid the topological naming problem (a reference to "face #7" breaks when the part changes). So picking a face only *reads* its plane once. A plane parallel to a base plane is stored as base plane + offset; any other (slanted, or facing down/back) is stored as its own plane. No sketch ever points at a face, so nothing can break. The trade-off: a sketch doesn't follow its face if that face moves later.
 - **Main window undo** came early (M4 instead of M5) because the snapshot undo from the sketch editor made it nearly free.
 - **File format:** `.sillycad` is plain JSON with a `format_version` field.
 - **Wayland:** the app sets `QT_QPA_PLATFORM=xcb` (XWayland), because OCCT's viewer needs an X11 window.

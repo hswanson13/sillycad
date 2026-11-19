@@ -67,13 +67,20 @@ class SketchEditor(QMainWindow):
 
     finished = Signal(object)
 
-    def __init__(self, sketch: Sketch, title: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        sketch: Sketch,
+        title: str,
+        parent: QWidget | None = None,
+        reference: list[list[XY]] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"Sketch: {title}")
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
         self.sketch = copy.deepcopy(sketch)
+        self.reference = reference or []  # face outline polylines, shown as a guide
         self.selection: list[str] = []
         self.result = SolveResult(True, 0)
         self.bad_constraints: set[str] = set()
@@ -188,6 +195,7 @@ class SketchEditor(QMainWindow):
     def set_tool(self, name: str) -> None:
         self.view.tool = name
         self.view.clicks = []
+        self.view.snap = self.view.hover = None
         self.tool_actions[name].setChecked(True)
         drawing = name != "select"
         self.view.setCursor(Qt.CursorShape.CrossCursor if drawing else Qt.CursorShape.ArrowCursor)

@@ -5,20 +5,30 @@ snapshots the document for undo and then recomputes the model from scratch.
 """
 
 import copy
+import dataclasses
 import logging
 import os
 import sys
 from collections.abc import Callable
 
+from OCC.Core.TopAbs import TopAbs_FACE
+from OCC.Core.TopoDS import TopoDS_Face, TopoDS_Shape, topods
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QFont, QKeySequence, QUndoStack
 from PySide6.QtWidgets import QApplication, QDockWidget, QFileDialog, QMainWindow, QMessageBox
 
 from sillycad.core.document import Document, Model, recompute
 from sillycad.core.export import export_stl
-from sillycad.core.features import Pad, Pocket, Revolve, SketchFeature, SolidFeature
-from sillycad.core.geometry import volume
-from sillycad.core.sketch import Sketch
+from sillycad.core.features import (
+    Pad,
+    Pocket,
+    Revolve,
+    SketchFeature,
+    SolidFeature,
+    plane_from_face,
+)
+from sillycad.core.geometry import Placement, outline_in_plane, volume
+from sillycad.core.sketch import XY, Sketch
 from sillycad.gui.commands import SnapshotCommand
 from sillycad.gui.dialogs import FeatureDialog, SketchPlaneDialog
 from sillycad.gui.feature_tree import FeatureTree
@@ -40,8 +50,10 @@ class MainWindow(QMainWindow):
         self.doc = Document()
         self.model = Model(None, {})
         self.undo_stack = QUndoStack(self)
+        self.picked_face: TopoDS_Face | None = None  # clicked in the 3D view, to sketch on
 
         self.viewer = Viewer(self)
+        self.viewer.sig_topods_selected.connect(self._picked)
         self.setCentralWidget(self.viewer)
         self.tree = FeatureTree()
         self.tree.edit_requested.connect(self.edit_feature)
@@ -158,6 +170,38 @@ class MainWindow(QMainWindow):
                 except Exception:  # one broken sketch shouldn't hide the rest
                     log.exception("Could not draw %s", sketch.name)
         self.viewer.show_model(model.shape, wires, self.show_planes.isChecked(), fit)
+        self.picked_face = None  # redrawing clears the 3D selection
+
+    def _picked(self, shapes: list[TopoDS_Shape]) -> None:
+        faces = [topods.Face(s) for s in shapes if s.ShapeType() == TopAbs_FACE]
+        self.picked_face = faces[0] if faces else None
+        if self.picked_face is not None:
+            self.statusBar().showMessage("Face picked. Click New Sketch (N) to sketch on it.")
+
+    def _picked_plane(self) -> tuple[str, float, Placement | None] | None:
+        """(plane, offset, face plane) of the picked face, if a flat one is picked."""
+        if self.picked_face is None:
+            return None
+        try:
+            return plane_from_face(self.picked_face)
+        except ValueError as exc:  # curved face
+            self.statusBar().showMessage(str(exc))
+            return None
+
+    def _outline(self, sketch: SketchFeature) -> list[list[XY]]:
+        """Edges of the body (as it is just before this sketch) lying in the sketch's plane."""
+        index = next(
+            (i for i, f in enumerate(self.doc.features) if f.id == sketch.id),
+            len(self.doc.features),
+        )
+        body = recompute(Document(self.doc.features[:index])).shape
+        if body is None:
+            return []
+        try:
+            return outline_in_plane(body, sketch.placement(), sketch.offset)
+        except Exception:  # the guide is a nicety; never block sketching over it
+            log.exception("Could not find the face outline")
+            return []
 
     def _preview(self, feature: SolidFeature) -> str | None:
         """Show what the document would look like with ``feature``; return its error."""
@@ -173,16 +217,21 @@ class MainWindow(QMainWindow):
     # ── Feature commands ────────────────────────────────────────────
 
     def new_sketch(self) -> None:
-        dialog = SketchPlaneDialog(self)
+        """Ask for a plane (the picked face is offered first), then open the sketch editor."""
+        plane, offset, face = self._picked_plane() or ("XY", 0.0, None)
+        dialog = SketchPlaneDialog(self, plane, offset, has_face=face is not None)
         if not dialog.exec():
             return
         plane, offset = dialog.values()
-        fid, name = self.doc.new_id(), self.doc.new_name("Sketch")
-        editor = SketchEditor(Sketch(), name, self)
+        feature = SketchFeature(
+            self.doc.new_id(), self.doc.new_name("Sketch"), plane, offset,
+            face=face if plane == "Face" else None,
+        )  # fmt: skip
+        editor = SketchEditor(Sketch(), feature.name, self, self._outline(feature))
         editor.finished.connect(
             lambda sketch: self.change(
-                f"Add {name}",
-                lambda d: d.features.append(SketchFeature(fid, name, plane, offset, sketch)),
+                f"Add {feature.name}",
+                lambda d: d.features.append(dataclasses.replace(feature, sketch=sketch)),
             )
         )
         editor.show()
@@ -213,7 +262,7 @@ class MainWindow(QMainWindow):
     def edit_feature(self, fid: str) -> None:
         f = self.doc.find(fid)
         if isinstance(f, SketchFeature):
-            editor = SketchEditor(f.sketch, f.name, self)
+            editor = SketchEditor(f.sketch, f.name, self, self._outline(f))
             editor.finished.connect(
                 lambda sketch: self.change(
                     f"Edit {f.name}", lambda d: setattr(d.find(fid), "sketch", sketch)
@@ -257,7 +306,8 @@ class MainWindow(QMainWindow):
         f = self.doc.find(fid)
         if not isinstance(f, SketchFeature):
             return
-        dialog = SketchPlaneDialog(self, f.plane, f.offset)
+        plane, offset, face = self._picked_plane() or (f.plane, f.offset, f.face)
+        dialog = SketchPlaneDialog(self, plane, offset, has_face=face is not None)
         if not dialog.exec():
             return
         plane, offset = dialog.values()
@@ -265,6 +315,7 @@ class MainWindow(QMainWindow):
         def move(d: Document) -> None:
             sketch = d.find(fid)
             sketch.plane, sketch.offset = plane, offset
+            sketch.face = face if plane == "Face" else None
 
         self.change(f"Move {f.name}", move)
 

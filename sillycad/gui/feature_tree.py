@@ -97,7 +97,8 @@ def _id(item: QTreeWidgetItem) -> str:
 def _describe(f: Feature, names: dict[str, str]) -> str:
     if isinstance(f, SketchFeature):
         offset = f", offset {f.offset:g} mm" if f.offset else ""
-        return f"sketch on {f.plane}{offset}"
+        where = "a picked face" if f.plane == "Face" else f.plane
+        return f"sketch on {where}{offset}"
     source = f" · {names.get(f.sketch_id, '?')}"
     if isinstance(f, Pad):
         extra = ", symmetric" if f.symmetric else ", reversed" if f.reversed else ""

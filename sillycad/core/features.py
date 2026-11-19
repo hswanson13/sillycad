@@ -16,7 +16,13 @@ from OCC.Core.gp import gp_Ax1, gp_Dir, gp_Pnt, gp_Trsf, gp_Vec
 from OCC.Core.TopoDS import TopoDS_Compound, TopoDS_Face, TopoDS_Shape
 
 from sillycad.core.constants import POINT_TOLERANCE
-from sillycad.core.geometry import place_on_plane, plane_axes, plane_trsf
+from sillycad.core.geometry import (
+    BASE_PLANES,
+    Placement,
+    face_placement,
+    place_on_plane,
+    plane_trsf,
+)
 from sillycad.core.profiles import curve_edge, find_profiles
 from sillycad.core.sketch import X_AXIS, XY, Y_AXIS, Arc, Circle, Line, Sketch
 
@@ -27,13 +33,26 @@ class FeatureError(Exception):
 
 @dataclass
 class SketchFeature:
-    """A 2D sketch on a base plane ("XY", "XZ" or "YZ"), moved ``offset`` mm along its normal."""
+    """A 2D sketch on a plane, moved ``offset`` mm along the plane's normal.
+
+    ``plane`` is a base plane ("XY", "XZ" or "YZ"), or "Face" for the plane of
+    a face picked on the body. A face's plane is stored as a plane (``face``),
+    never as a reference to the face itself, so it can't break when the body
+    changes (the topological naming problem). The flip side: it doesn't move
+    if that face moves later; pick the face again with "Change plane".
+    """
 
     id: str
     name: str
     plane: str = "XY"
     offset: float = 0.0
     sketch: Sketch = field(default_factory=Sketch)
+    face: Placement | None = None  # only for plane == "Face"
+
+    def placement(self) -> Placement:
+        if self.plane == "Face" and self.face is not None:
+            return self.face
+        return BASE_PLANES[self.plane]
 
     def wires(self) -> TopoDS_Compound:
         """All sketch curves as edges in 3D, for display."""
@@ -43,14 +62,31 @@ class SketchFeature:
         for g in self.sketch.geo.values():
             if isinstance(g, Line | Arc | Circle):
                 builder.Add(compound, curve_edge(self.sketch, g))
-        return place_on_plane(compound, self.plane, self.offset)
+        return place_on_plane(compound, self.placement(), self.offset)
 
     def faces(self) -> list[TopoDS_Face]:
         """Closed profiles as faces in 3D. Raises ProfileError."""
-        return [place_on_plane(f, self.plane, self.offset) for f in find_profiles(self.sketch)]
+        return [
+            place_on_plane(f, self.placement(), self.offset) for f in find_profiles(self.sketch)
+        ]
 
     def normal(self) -> gp_Vec:
-        return gp_Vec(plane_axes(self.plane).Direction())
+        return gp_Vec(*self.placement().normal)
+
+
+def plane_from_face(face: TopoDS_Face) -> tuple[str, float, Placement | None]:
+    """(plane, offset, face plane) for sketching on a picked face.
+
+    A face parallel to a base plane, facing the same way, becomes that base
+    plane plus an offset (simple, and easy to read). Anything else (slanted or
+    facing the other way) keeps its own plane. Raises ValueError if not flat.
+    """
+    placement = face_placement(face)
+    for name, base in BASE_PLANES.items():
+        if placement.normal == base.normal:
+            offset = sum(o * n for o, n in zip(placement.origin, base.normal, strict=True))
+            return name, round(offset, 9) + 0.0, None
+    return "Face", 0.0, placement
 
 
 @dataclass
@@ -119,7 +155,7 @@ def revolve_shape(rev: Revolve, sk: SketchFeature) -> TopoDS_Shape:
     _check_axis_clear(sk.sketch, a, b)
     faces = sk.faces()
     axis = gp_Ax1(gp_Pnt(a[0], a[1], 0), gp_Dir(b[0] - a[0], b[1] - a[1], 0))
-    axis = axis.Transformed(plane_trsf(sk.plane, sk.offset))
+    axis = axis.Transformed(plane_trsf(sk.placement(), sk.offset))
     angle = math.radians(rev.angle)
     return fuse_all([BRepPrimAPI_MakeRevol(face, axis, angle).Shape() for face in faces])
 

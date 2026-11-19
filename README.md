@@ -42,6 +42,8 @@ python -m sillycad
 | Front / Top / Right / Iso view | `1` / `2` / `3` / `0` |
 | Fit all | `F` |
 
+To sketch on the part, click a flat face in the 3D view, then New Sketch. The face's outline shows in the sketch editor as a guide.
+
 In the feature tree: double-click to edit (sketches reopen in the sketch editor), `F2` to rename, `Del` to delete, right-click for more. Failed features are red, with the reason shown; the last good body stays on screen.
 
 **Sketch editor**
