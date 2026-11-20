@@ -1,6 +1,6 @@
 """Model browser: document, origin and the feature history."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 from PySide6.QtCore import QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QKeyEvent
@@ -17,6 +17,7 @@ from sillycad.core.document import Document
 from sillycad.core.features import Feature, Pad, Pocket, Revolve, SketchFeature
 from sillycad.gui import theme
 from sillycad.gui.icons import icon
+from sillycad.gui.tooltips import tooltip
 
 _KIND = Qt.ItemDataRole.UserRole + 1
 _KEY = Qt.ItemDataRole.UserRole + 2
@@ -171,7 +172,7 @@ class ModelBrowser(QTreeWidget):
         if self._origin_eye is not None:
             action = "Hide" if self._planes_visible else "Show"
             self._origin_eye.setIcon(icon("sketches" if self._planes_visible else "hidden"))
-            self._origin_eye.setToolTip(f"<b>{action} Origin</b><br>{action} planes and axes.")
+            self._origin_eye.setToolTip(tooltip(f"{action} Origin", f"{action} planes and axes"))
 
     def select(self, fid: str) -> None:
         """Select a feature by its stable ID."""
@@ -219,29 +220,51 @@ class ModelBrowser(QTreeWidget):
         self.setCurrentItem(item)
         kind = item.data(0, _KIND)
         menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+
+        def add(text: str, description: str, callback: Callable[[], object], key: str = "") -> None:
+            action = menu.addAction(text, callback)
+            action.setToolTip(tooltip(text, description, key))
+
         if kind == "origin":
             action = "Hide" if self._planes_visible else "Show"
-            menu.addAction(f"{action} Planes and Origin", self.planes_visibility_requested.emit)
+            add(
+                f"{action} Planes and Origin",
+                f"{action} the work planes and axes",
+                self.planes_visibility_requested.emit,
+            )
         elif kind == "plane":
 
             def start_sketch() -> None:
                 self.start_sketch_requested.emit(_id(item))
 
-            menu.addAction("Start 2D Sketch", start_sketch)
-            menu.addAction(
-                "Start Sketch with Offset…", lambda: self.offset_sketch_requested.emit(_id(item))
+            add("Start 2D Sketch", "Sketch on the selected plane", start_sketch, "N")
+            add(
+                "Start Sketch with Offset…",
+                "Choose the offset for a sketch on this plane",
+                lambda: self.offset_sketch_requested.emit(_id(item)),
             )
         elif kind in ("feature", "sketch"):
             fid = _id(item)
-            menu.addAction(
+            add(
                 "Edit Sketch" if kind == "sketch" else "Edit Feature",
+                "Edit the selected sketch" if kind == "sketch" else "Edit the selected feature",
                 lambda: self.edit_requested.emit(fid),
             )
             if kind == "sketch":
-                menu.addAction("Change plane…", lambda: self.plane_requested.emit(fid))
-            menu.addAction("Rename", lambda: self.editItem(item, 0))
+                add(
+                    "Redefine (Change plane)…",
+                    "Choose another plane for this sketch",
+                    lambda: self.plane_requested.emit(fid),
+                )
+            add("Rename", "Rename the selected item", lambda: self.editItem(item, 0), "F2")
             menu.addSeparator()
-            menu.addAction("Delete", lambda: self.delete_requested.emit(fid))
+            add(
+                "Delete",
+                "Delete the selected item and its dependents",
+                lambda: self.delete_requested.emit(fid),
+                "Del",
+            )
         else:
             return
         menu.exec(self.viewport().mapToGlobal(pos))

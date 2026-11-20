@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from sillycad.gui.tooltips import tooltip
+
 
 class Ribbon(QWidget):
     """File menu, Quick Access Toolbar and the part-environment ribbon."""
@@ -46,14 +48,20 @@ class Ribbon(QWidget):
         file_button = QToolButton()
         file_button.setObjectName("fileButton")
         file_button.setText("File")
-        file_button.setToolTip("<b>File</b><br>Create, open, save or export a part.")
+        file_button.setToolTip(tooltip("File", "Create, open, save or export a part"))
         file_menu = QMenu(file_button)
+        file_menu.setToolTipsVisible(True)
         file_menu.addActions([actions[key] for key in ("new", "open", "save", "save_as")])
         file_menu.addSeparator()
         export_menu = file_menu.addMenu("Export")
+        export_menu.setToolTipsVisible(True)
         export_stl = export_menu.addAction("STL…")
         export_stl.setIcon(actions["export"].icon())
         export_stl.setToolTip(actions["export"].toolTip())
+        export_stl.setEnabled(actions["export"].isEnabled())
+        actions["export"].changed.connect(
+            lambda: export_stl.setEnabled(actions["export"].isEnabled())
+        )
         export_stl.triggered.connect(actions["export"].trigger)
         file_menu.addSeparator()
         file_menu.addAction(actions["quit"])
@@ -72,14 +80,11 @@ class Ribbon(QWidget):
         self.pages = QStackedWidget()
         sketch_button = _button(actions["new_sketch"], large=True)
         sketch_menu = QMenu(sketch_button)
+        sketch_menu.setToolTipsVisible(True)
         sketch_menu.addAction(actions["sketch_offset"])
         sketch_button.setMenu(sketch_menu)
         sketch_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self.extrude_button = _button(actions["extrude"], large=True)
-        extrude_menu = QMenu(self.extrude_button)
-        extrude_menu.addActions([actions["pad"], actions["pocket"]])
-        self.extrude_button.setMenu(extrude_menu)
-        self.extrude_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.pages.addWidget(
             _page(
                 [
@@ -110,11 +115,6 @@ class Ribbon(QWidget):
         self.tabs.currentChanged.connect(self.pages.setCurrentIndex)
         layout.addWidget(self.pages)
 
-    def show_extrude_menu(self) -> None:
-        """Open the Join/Cut menu for the Extrude keyboard shortcut."""
-        self.tabs.setCurrentIndex(0)
-        self.extrude_button.showMenu()
-
     def show_sketch(self, actions: dict[str, QAction]) -> None:
         """Create and select the contextual Sketch ribbon."""
         controls = QWidget()
@@ -143,6 +143,7 @@ class Ribbon(QWidget):
 
         dimension = _button(actions["smart_dimension"], large=True)
         menu = QMenu(dimension)
+        menu.setToolTipsVisible(True)
         for kind in ("distance", "distance_x", "distance_y", "angle", "radius", "diameter"):
             menu.addAction(actions[kind])
         dimension.setMenu(menu)

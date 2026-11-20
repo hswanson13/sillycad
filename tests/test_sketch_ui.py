@@ -111,6 +111,10 @@ def test_contextual_sketch_finish_and_undo(window: MainWindow) -> None:
     assert mode is not None
     assert window.ribbon.tabs.tabText(window.ribbon.tabs.currentIndex()) == "Sketch"
     assert not mode.actions["constraint_controls"].isChecked()
+    assert all(
+        "<b>" in action.toolTip() and "Shortcut:" in action.toolTip()
+        for action in mode.actions.values()
+    )
     assert window.undo_group.activeStack() is mode.session.undo_stack
     assert not window.actions["pad"].isEnabled()
     mode.actions["rectangle"].trigger()

@@ -1,10 +1,6 @@
-"""Small dialogs: sketch plane and feature parameters."""
-
-import copy
-from collections.abc import Callable
+"""Small dialogs for sketch planes and STL export."""
 
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -14,8 +10,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from sillycad.core.features import Pad, Pocket, Revolve, SketchFeature, SolidFeature
-from sillycad.core.sketch import Line
+from sillycad.gui.tooltips import tooltip
 
 
 class SketchPlaneDialog(QDialog):
@@ -41,6 +36,8 @@ class SketchPlaneDialog(QDialog):
             self.plane.addItem("Picked face", "Face")
         self.plane.setCurrentIndex(max(0, self.plane.findData(plane)))
         self.offset = _number_box(offset, -100000, 100000, " mm")
+        self.plane.setToolTip(tooltip("Plane", "Choose the sketch plane"))
+        self.offset.setToolTip(tooltip("Offset", "Set the offset from the selected plane"))
         form.addRow("Plane:", self.plane)
         form.addRow("Offset:", self.offset)
         hint = QLabel("Tip: click a flat face in the 3D view first to sketch on it.")
@@ -51,102 +48,6 @@ class SketchPlaneDialog(QDialog):
     def values(self) -> tuple[str, float]:
         """(plane, offset in mm)."""
         return self.plane.currentData(), self.offset.value()
-
-
-class FeatureDialog(QDialog):
-    """Edit a Pad, Pocket or Revolve. Every change is previewed in the 3D view.
-
-    ``preview(feature)`` shows the trial feature and returns its error message, if any.
-    """
-
-    def __init__(
-        self,
-        feature: SolidFeature,
-        sketches: list[SketchFeature],
-        preview: Callable[[SolidFeature], str | None],
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.feature = copy.deepcopy(feature)
-        self._preview = preview
-        self._sketches = {s.id: s for s in sketches}
-        self.setWindowTitle(feature.name)
-        form = QFormLayout(self)
-
-        self.sketch = QComboBox()
-        for s in sketches:
-            self.sketch.addItem(s.name, s.id)
-        self.sketch.setCurrentIndex(max(0, self.sketch.findData(feature.sketch_id)))
-        self.sketch.currentIndexChanged.connect(self._changed)
-        form.addRow("Sketch:", self.sketch)
-
-        f = self.feature
-        if isinstance(f, Pad | Pocket):
-            self.length = _number_box(f.length, 0.001, 100000, " mm")
-            self.length.valueChanged.connect(self._changed)
-            form.addRow("Length:", self.length)
-        if isinstance(f, Pocket):
-            self.through_all = self._check(form, "Through all", f.through_all)
-        if isinstance(f, Pad):
-            self.symmetric = self._check(form, "Symmetric to the sketch plane", f.symmetric)
-        if isinstance(f, Pad | Pocket):
-            self.reversed = self._check(form, "Reversed direction", f.reversed)
-        if isinstance(f, Revolve):
-            self.axis = QComboBox()
-            self.axis.currentIndexChanged.connect(self._changed)
-            self.angle = _number_box(f.angle, 0.001, 360, "°")
-            self.angle.valueChanged.connect(self._changed)
-            form.addRow("Axis:", self.axis)
-            form.addRow("Angle:", self.angle)
-            self._fill_axes()
-
-        self.message = QLabel()
-        self.message.setWordWrap(True)
-        self.message.setObjectName("errorLabel")
-        form.addRow(self.message)
-        form.addRow(_buttons(self))
-        self._changed()
-
-    def _check(self, form: QFormLayout, text: str, value: bool) -> QCheckBox:
-        box = QCheckBox(text)
-        box.setChecked(value)
-        box.toggled.connect(self._changed)
-        form.addRow(box)
-        return box
-
-    def _fill_axes(self) -> None:
-        """Axis choices: the sketch axes plus the sketch's construction lines."""
-        current = self.axis.currentData() or self.feature.axis
-        sketch = self._sketches.get(self.sketch.currentData())
-        self.axis.blockSignals(True)
-        self.axis.clear()
-        self.axis.addItem("Sketch vertical axis (Y)", "y_axis")
-        self.axis.addItem("Sketch horizontal axis (X)", "x_axis")
-        if sketch:
-            for g in sketch.sketch.geo.values():
-                if isinstance(g, Line) and g.construction:
-                    self.axis.addItem(f"Construction line {g.id}", g.id)
-        self.axis.setCurrentIndex(max(0, self.axis.findData(current)))
-        self.axis.blockSignals(False)
-
-    def _changed(self) -> None:
-        f = self.feature
-        f.sketch_id = self.sketch.currentData()
-        if isinstance(f, Pad | Pocket):
-            f.length = self.length.value()
-            f.reversed = self.reversed.isChecked()
-        if isinstance(f, Pocket):
-            f.through_all = self.through_all.isChecked()
-            self.length.setEnabled(not f.through_all)
-        if isinstance(f, Pad):
-            f.symmetric = self.symmetric.isChecked()
-            self.reversed.setEnabled(not f.symmetric)
-        if isinstance(f, Revolve):
-            self._fill_axes()
-            f.axis = self.axis.currentData()
-            f.angle = self.angle.value()
-        error = self._preview(copy.deepcopy(f))
-        self.message.setText(f"⚠ {error}" if error else "")
 
 
 def _number_box(value: float, low: float, high: float, suffix: str) -> QDoubleSpinBox:
@@ -164,6 +65,12 @@ def _buttons(dialog: QDialog) -> QDialogButtonBox:
     )
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
+    buttons.button(QDialogButtonBox.StandardButton.Ok).setToolTip(
+        tooltip("OK", "Accept the settings", "Enter")
+    )
+    buttons.button(QDialogButtonBox.StandardButton.Cancel).setToolTip(
+        tooltip("Cancel", "Discard these settings", "Esc")
+    )
     return buttons
 
 
@@ -175,9 +82,13 @@ class StlDialog(QDialog):
         self.setWindowTitle("Export STL")
         form = QFormLayout(self)
         self.linear = _number_box(linear, 0.001, 10, " mm")
-        self.linear.setToolTip("How far the triangles may stray from the true surface.")
+        self.linear.setToolTip(
+            tooltip("Linear deflection", "Set how far triangles may stray from the surface")
+        )
         self.angular = _number_box(angular, 1, 45, "°")
-        self.angular.setToolTip("How sharply neighbouring triangles may bend on curves.")
+        self.angular.setToolTip(
+            tooltip("Angular deflection", "Set how sharply neighbouring triangles may bend")
+        )
         form.addRow("Linear deflection:", self.linear)
         form.addRow("Angular deflection:", self.angular)
         hint = QLabel("Smaller = smoother curves and a bigger file. The defaults suit 3D printing.")

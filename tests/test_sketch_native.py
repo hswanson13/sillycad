@@ -1,5 +1,6 @@
 """Opt-in real-window tests for native OCCT sketch interaction."""
 
+import math
 import os
 from pathlib import Path
 
@@ -13,10 +14,9 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog
 
 from sillycad.core.document import Document
-from sillycad.core.features import Pad, SketchFeature
+from sillycad.core.features import Pad, Pocket, Revolve, SketchFeature
 from sillycad.core.geometry import face_placement, volume
 from sillycad.core.sketch import Arc, Circle, Line, Point, Sketch
-from sillycad.gui.dialogs import FeatureDialog
 from sillycad.gui.main_window import MainWindow
 from sillycad.sketch_math import add_rectangle
 
@@ -176,12 +176,16 @@ def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         assert len(window.doc.features) == 3
 
         sketch = window.doc.sketches()[-1]
-        feature = Pad(window.doc.new_id(), "Extrusion2", sketch.id)
-        dialog = FeatureDialog(feature, window.doc.sketches(), window._preview, window)
-        assert not dialog.message.text()
-        dialog.length.setValue(5)
-        assert not dialog.message.text()
-        window.change("Add Extrusion2", lambda doc: doc.features.append(dialog.feature))
+        QTest.keyClick(window.viewer, Qt.Key.Key_E)
+        panel = window._feature_panel
+        assert panel is not None
+        assert panel.feature.sketch_id == sketch.id
+        assert not panel.message.text()
+        panel.length.setValue(5)
+        assert not panel.message.text()
+        panel.length.setFocus()
+        QTest.keyClick(panel.length, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
+        assert window._feature_panel is None
         assert not window.model.errors
         expected_volume = volume(window.model.shape)
         path = tmp_path / "part.sillycad"
@@ -210,6 +214,7 @@ def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         window.export_stl()
         assert stl.stat().st_size > 84
         assert "triangles" in window.statusBar().currentMessage()
+        exercise_feature_panels(window)
         exercise_drawing_tools(window)
     finally:
         if window._sketch_mode is not None:
@@ -218,6 +223,79 @@ def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         window.undo_stack.setClean()
         window.close()
         app.processEvents()
+
+
+def exercise_feature_panels(window: MainWindow) -> None:
+    """Verify Apply, Undo and Revolve against the native 3D preview."""
+    base = Sketch()
+    add_rectangle(base, (0, 0), (40, 20))
+    hole = Sketch()
+    add_rectangle(hole, (5, 5), (15, 10))
+    window._set_document(
+        Document(
+            [
+                SketchFeature("f1", "Sketch1", sketch=base),
+                Pad("f2", "Extrusion1", "f1"),
+                SketchFeature("f3", "Sketch2", "XY", 10, hole),
+            ],
+            next_id=4,
+        ),
+        None,
+    )
+    QTest.keyClick(window.viewer, Qt.Key.Key_E)
+    panel = window._feature_panel
+    assert panel is not None
+    QTest.mouseClick(panel.cut, Qt.MouseButton.LeftButton)
+    panel.extent.setCurrentIndex(panel.extent.findData("through_all"))
+    assert not panel.message.text()
+    QTest.mouseClick(panel.apply, Qt.MouseButton.LeftButton)
+    assert panel is window._feature_panel
+    assert isinstance(window.doc.features[-1], Pocket)
+    assert volume(window.model.shape) == pytest.approx(7500)
+    QTest.keyClick(window.viewer, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    assert window._feature_panel is None
+    assert len(window.doc.features) == 4
+    QTest.keyClick(window.viewer, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    assert len(window.doc.features) == 3
+    QTest.keyClick(window.viewer, Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier)
+    assert len(window.doc.features) == 4
+    QTest.keyClick(window.viewer, Qt.Key.Key_E)
+    assert window._feature_panel is not None
+    QTest.keyClick(window.viewer, Qt.Key.Key_Escape)
+    assert window._feature_panel is None
+    assert len(window.doc.features) == 4
+
+    sketch = Sketch()
+    add_rectangle(sketch, (10, 0), (15, 20))
+    axis = sketch.add_line(-2, 0, -2, 10, construction=True)
+    window._set_document(Document([SketchFeature("f1", "Sketch1", sketch=sketch)], next_id=2), None)
+    QTest.keyClick(window.viewer, Qt.Key.Key_R)
+    panel = window._feature_panel
+    assert panel is not None
+    panel.axis.setCurrentIndex(panel.axis.findData(axis))
+    panel.extent.setCurrentIndex(panel.extent.findData("angle"))
+    panel.angle.setValue(180)
+    assert not panel.message.text()
+    panel.angle.setFocus()
+    QTest.keyClick(
+        panel.angle,
+        Qt.Key.Key_Enter,
+        Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.KeypadModifier,
+    )
+    revolution = window.doc.features[-1]
+    assert isinstance(revolution, Revolve)
+    assert revolution.axis == axis and revolution.angle == 180
+    expected = math.pi * (17**2 - 12**2) * 20 / 2
+    assert volume(window.model.shape) == pytest.approx(expected)
+    window.edit_feature(revolution.id)
+    panel = window._feature_panel
+    assert panel is not None
+    panel.extent.setCurrentIndex(panel.extent.findData("full"))
+    panel.apply.click()
+    assert volume(window.model.shape) == pytest.approx(expected * 2)
+    panel.cancel.click()
+    window.actions["undo"].trigger()
+    assert volume(window.model.shape) == pytest.approx(expected)
 
 
 def exercise_drawing_tools(window: MainWindow) -> None:

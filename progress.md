@@ -2,9 +2,9 @@
 
 # SillyCAD Progress
 
-**Where we are:** 🎉 M1–M5, sketching on faces, U1 (shell and theme), U2 (viewport), and U3 (sketch environment) are done. The headless suite has 83 passing tests; the additional native-window test passes when enabled.
+**Where we are:** 🎉 M1–M5, sketching on faces, and U1–U4 (the Inventor-inspired UI overhaul) are done. The headless suite has 93 passing tests; the additional native-window test passes when enabled.
 
-**Needs you:** try U3 below and confirm before starting U4.
+**Needs you:** try the U4 workflow below when you have time.
 
 Legend: ✅ done · 🔨 in progress · ⬜ not started
 
@@ -120,11 +120,39 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 - [x] Ruff passes. The headless suite has 83 passed and one opt-in native-window test skipped; that native test passes separately and covers face sketching, navigation, dimension / glyph editing, preview, save / reopen and STL export.
 - [x] You chose to defer selecting regions from overlapping circles. Today the profile finder rejects the intersections, and solids use every profile rather than storing a region choice. Supporting that feature requires modeling and file-format changes outside U3's UI-only scope.
 
-**Still to come:** feature Property Panels and polish (U4).
+## ✅ U4: Property Panels and polish
+
+**You'll be able to:** create or edit an Extrude or Revolve in a docked panel while watching the 3D preview.
+
+- [x] One **Extrude** command opens a Join / Cut panel. Distance, direction, symmetric Join and Through All Cut map to the existing Pad / Pocket data; existing `P` / `O` shortcuts remain.
+- [x] Revolve offers sketch axes and construction lines, plus Full / Angle extent. Editing keeps the feature type and identity.
+- [x] **OK** commits and closes, **Cancel** discards the current preview, and **Apply (+)** commits while staying open. On a new feature, Apply prepares a fresh feature; when editing, it keeps editing the same one.
+- [x] Preview errors are shown in the panel. As before, an accepted failed feature is marked red in the browser; the last good body remains visible.
+- [x] Undo cancels an active feature panel first, then undoes history on the next press. Redo, save / reopen, STL export, sketch undo and main-window undo continue to work.
+- [x] Browser context menus include Edit, Redefine, Rename, Delete and Origin visibility. Buttons have rich tooltips; the panel and controls use the light-theme colors and Comic Sans fallbacks.
+- [x] Ruff passes. The headless suite has 93 passed and one opt-in native-window test skipped; the native test passes separately and covers panel shortcuts, Join / Cut, Apply, Undo, Revolve, sketches, saving and STL export.
+
+**Known limitation:** choosing an individual region from overlapping circles remains deferred; the modeling core and file format are unchanged.
 
 ---
 
 ## How to try it
+
+### U4
+
+```bash
+conda activate sillycad
+python -m sillycad
+```
+
+1. Make a closed rectangle sketch and finish it. Press `E`: the **Extrude** panel replaces the Model browser, and a Join preview appears. Change **Distance**, try **Flipped** and **Symmetric**, then click **OK**.
+2. Sketch a circle on the block's top face and finish. Press `E`, choose **Cut**, and try **Distance** and **Through All**. The preview should update as you change the inputs. Click **Apply (+)**: the cut is added and the panel stays open with a new feature name. Click **Cancel** to leave that next preview without removing the applied cut.
+3. Double-click the extrusion in the browser. Edit its settings, click **Apply**, change another value and then **Cancel**: the applied edit remains. `Ctrl+Z` undoes the applied edit. While a panel is open, the first `Ctrl+Z` cancels the panel instead.
+4. In a new part, draw a rectangle to one side of a sketch axis and finish. Press `R`, try **Full** and **Angle**, and choose a sketch axis or a construction line. Check the live preview, then commit with `Ctrl+Enter`.
+5. Right-click a sketch for **Redefine (Change plane)**; try **Edit**, `F2` rename, `Del`, and the Origin eye. Hover over ribbon and panel controls for their tooltips. Save, reopen and export STL.
+6. Run `ruff check .`, `ruff format --check .`, and `pytest`. On X11 / XWayland, run the extra real-window check with `SILLYCAD_NATIVE_GUI_TESTS=1 QT_QPA_PLATFORM=xcb pytest -q tests/test_sketch_native.py`.
+
+**Panel keys:** `E` Extrude · `P` Join · `O` Cut · `R` Revolve · `Ctrl+Enter` OK · `Esc` Cancel · `Ctrl+Z` cancel panel / undo · `Ctrl+Shift+Z` or `Ctrl+Y` redo.
 
 ### U3
 
@@ -136,7 +164,7 @@ python -m sillycad
 1. Click **Start 2D Sketch**, select XY, and drag **Rectangle** between opposite corners. The right panel should report one closed profile. Select an edge, press `D`, enter a length, and double-click the label to change it.
 2. Click **Constraints** in the ribbon to reveal the normally hidden buttons. Open **Constraints** in the sketch-status panel to see the list. Click a glyph and press `Del`; `Ctrl+Z` restores it. Try `F9` and `F8` to hide and show glyphs.
 3. Draw a line chain with `L`, then right-click to stop it. Try the sketch marking menu, construction toggle, local undo / redo, and a stray line or overlapping circles to see profile feedback.
-4. Finish (`Ctrl+Enter`), choose **Extrude → Join**, and make a block. Start a new sketch on its flat face: the part should stay visible behind the sketch and the face outline should snap at its corners.
+4. Finish (`Ctrl+Enter`), choose **Extrude** and **Join** in the Property Panel, and make a block. Start a new sketch on its flat face: the part should stay visible behind the sketch and the face outline should snap at its corners.
 5. Orbit with Shift+middle-drag, pan with middle-drag, and zoom with the wheel or right-drag. Press `F5` to face the sketch again. Finish, then undo / redo once in the main window; save, reopen, and export STL.
 6. Run `ruff check .`, `ruff format --check .`, and `pytest`. To run the extra native-window check on X11 / XWayland, use `SILLYCAD_NATIVE_GUI_TESTS=1 QT_QPA_PLATFORM=xcb pytest -q tests/test_sketch_native.py`.
 
@@ -148,7 +176,7 @@ python -m sillycad
 ```
 
 1. Click **Start 2D Sketch** (`N`), then select a highlighted base plane in the viewport or a plane under **Origin**. Alternatively, select a plane first and start the command. The sketch opens immediately, without a plane dialog. Try `Esc` and right-click to cancel while waiting for a plane.
-2. Draw a closed rectangle with the Line tool, finish the sketch, and use **Extrude** (`E`) → **Join (Pad)**. Change the length and check the live preview, then click OK. The browser should show **Extrusion1** with **Sketch1** nested underneath.
+2. Draw a closed rectangle with the Line tool, finish the sketch, and use **Extrude** (`E`) with **Join** in the Property Panel. Change the length and check the live preview, then click OK. The browser should show **Extrusion1** with **Sketch1** nested underneath.
 3. Click **Start 2D Sketch** and then a flat face of the solid. Its outline should appear as a snappable guide in the sketch editor. Cancel that sketch; try selecting the face before starting a sketch as well.
 4. Open the **Start 2D Sketch** dropdown → **Sketch with Offset…**, choose a base plane and enter an offset. Alternatively, right-click a browser plane and choose **Sketch with Offset…**.
 5. Click different ViewCube faces and corners; use `F6` to return to the isometric Home view. Try each navigation-bar mode, middle-drag pan, right-drag zoom, the wheel, and `Home` for Zoom All. Select a plane, planar face, or browser sketch and choose **Look At**.
@@ -162,13 +190,13 @@ python -m sillycad
 |---|---|---|---|
 | New / Open | `Ctrl+N` / `Ctrl+O` | Save / Save As | `Ctrl+S` / `Ctrl+Shift+S` |
 | Export STL | `Ctrl+E` | Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` or `Ctrl+Y` |
-| Start 2D Sketch | `N` | Extrude menu | `E` |
+| Start 2D Sketch | `N` | Extrude | `E` |
 | Join (Pad) / Cut (Pocket) | `P` / `O` | Revolve | `R` |
 | Zoom All | `F` / `Home` | Home view | `0` / `F6` |
 | Front / Top / Right | `1` / `2` / `3` | Shaded / Wireframe | `S` / `W` |
 | Cancel plane selection | `Esc` / right-click | Marking menu | right-click viewport |
 
-For current sketch controls, see the table in the README. The M1–M5 walkthroughs below describe the historical UI and are superseded by U3 where they differ.
+For current sketch controls, see the table in the README. The M1–M5 walkthroughs below describe the historical UI and are superseded by U4 where they differ.
 
 ### M1
 

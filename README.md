@@ -52,11 +52,22 @@ Open a file directly with `python -m sillycad part.sillycad`.
 
 Use **File** for document commands and the Quick Access Toolbar for common file commands and undo/redo. The **3D Model** ribbon has Start 2D Sketch, Extrude (Join or Cut), Revolve, and plane visibility; **View** has display, visibility, and navigation controls.
 
+**Extrude and Revolve**
+
+Select a sketch in the browser or start **Extrude** (`E`) or **Revolve** (`R`); the feature's Property Panel replaces the browser while its live preview remains in the viewport. If there is exactly one closed profile, its sketch is chosen automatically unless you explicitly selected another sketch.
+
+- **Extrude** switches between **Join** (Pad) and **Cut** (Pocket). Choose the distance and default, flipped, or (for Join) symmetric direction. Cut also offers **Through All**. `P` and `O` still open the panel with Join or Cut selected.
+- **Revolve** uses a sketch axis or construction line and a **Full** or **Angle** extent.
+- **OK** (`Ctrl+Enter`) commits and closes; **Cancel** (`Esc`) discards the current preview. **Apply (+)** commits and stays open for another new feature. When editing an existing feature, Apply saves that edit and keeps the same feature open. Cancelling afterward does not undo an earlier Apply.
+- Preview errors appear in the panel. As before, accepting a failed feature keeps it in the browser with a red error badge so it can be edited. The last valid body remains visible.
+
+While a Property Panel is open, Undo first cancels the active panel; the next Undo changes document history. Redo closes the panel and redoes the next history step. File and other feature commands are available again after the panel closes.
+
 Click **Start 2D Sketch**, then pick a visible base plane or flat face in the viewport, or a plane under **Origin** in the Model browser. Alternatively, select the plane or face first, then start the sketch. The sketch opens in the main viewport with the part behind it; a face outline appears as a snappable guide. To specify an offset, use **Sketch with Offset…** from the Start 2D Sketch dropdown or a browser plane's context menu. The Origin eye hides or shows the planes and axes.
 
 Select a plane, flat face, or sketch and use **Look At** on the View ribbon, navigation bar, or viewport marking menu to face it directly. While a sketch plane is being requested, `Esc` or right-click cancels the command.
 
-Consumed sketches are nested under their features; other sketches remain at the top level. Double-click to edit, `F2` to rename, `Del` to delete, or right-click for more. Failed features are red with the reason in a tooltip; the last good body stays on screen. The document tab and window title show `*` for unsaved changes.
+Consumed sketches are nested under their features; other sketches remain at the top level. Double-click to edit, `F2` to rename, `Del` to delete, or right-click for **Edit**, **Redefine (Change plane)**, **Rename**, or **Delete**. Failed features are red with the reason in a tooltip; the last good body stays on screen. The document tab and window title show `*` for unsaved changes.
 
 **Sketch environment**
 

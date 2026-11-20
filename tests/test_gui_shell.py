@@ -13,9 +13,9 @@ from OCC.Core.StdSelect import StdSelect_BRepOwner
 from OCC.Core.TopAbs import TopAbs_FACE
 from OCC.Core.TopExp import TopExp_Explorer
 from OCC.Core.TopoDS import topods
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QKeyEvent, QKeySequence, QMouseEvent
-from PySide6.QtWidgets import QApplication, QToolButton, QWidget
+from PySide6.QtWidgets import QApplication, QMenu, QToolButton, QWidget
 
 from sillycad.core.document import Document
 from sillycad.core.features import Pad, Pocket, SketchFeature
@@ -119,6 +119,39 @@ def test_browser_nests_shared_sketches_and_preserves_selection(app: QApplication
     assert deleted == [shared.id]
 
 
+def test_browser_sketch_context_menu_redefines_plane(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    browser = ModelBrowser()
+    sketch = SketchFeature("s1", "Sketch1")
+    browser.fill(Document([sketch]), {})
+    item = browser.topLevelItem(0).child(1)
+    monkeypatch.setattr(browser, "itemAt", lambda pos: item)
+    selected = []
+    browser.plane_requested.connect(selected.append)
+
+    labels = {}
+
+    def choose() -> None:
+        menu = next(
+            widget
+            for widget in QApplication.topLevelWidgets()
+            if isinstance(widget, QMenu) and widget.isVisible()
+        )
+        actions = {action.text(): action for action in menu.actions()}
+        labels.update({name: action.toolTip() for name, action in actions.items() if name})
+        action = actions.get("Redefine (Change plane)…")
+        if action is not None:
+            action.trigger()
+        menu.close()
+
+    QTimer.singleShot(0, choose)
+    browser._menu(QPoint())
+    assert {"Edit Sketch", "Redefine (Change plane)…", "Rename", "Delete"} <= labels.keys()
+    assert all("<b>" in text for text in labels.values())
+    assert selected == [sketch.id]
+
+
 def test_origin_plane_selection_and_visibility(window: MainWindow) -> None:
     viewer = window.viewer
     assert isinstance(viewer, FakeViewer)
@@ -167,6 +200,11 @@ def test_ribbon_actions_and_view_shortcuts(window: MainWindow) -> None:
     assert QKeySequence("F6") in window.actions["iso"].shortcuts()
     assert QKeySequence("Ctrl+Shift+Z") in window.actions["redo"].shortcuts()
     assert QKeySequence("Ctrl+Y") in window.actions["redo"].shortcuts()
+    assert all(
+        "<b>" in action.toolTip() and "Shortcut:" in action.toolTip()
+        for action in window.actions.values()
+    )
+    assert window.ribbon.extrude_button.menu() is None
     file_button = window.ribbon.findChild(QToolButton, "fileButton")
     assert file_button is not None
     file_menu = file_button.menu()

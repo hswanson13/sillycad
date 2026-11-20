@@ -56,6 +56,49 @@ QWidget#navigationBar {{
 QWidget#markingControls {{
     background: {WHITE};
 }}
+QWidget#propertyPanel {{
+    background: {WHITE};
+}}
+QLabel#propertyTitle {{
+    color: {TEXT};
+    font-weight: bold;
+    font-size: 15px;
+}}
+QGroupBox {{
+    color: {TEXT};
+    font-weight: bold;
+    border: 1px solid {BORDER};
+    margin-top: 12px;
+    padding: 8px 6px 6px;
+}}
+QGroupBox::title {{
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0 4px;
+}}
+QPushButton {{
+    color: {TEXT};
+    background: {RIBBON};
+    border: 1px solid {BORDER};
+    border-radius: 2px;
+    padding: 5px 8px;
+}}
+QPushButton:hover, QPushButton#operationButton:checked {{
+    background: {ACCENT_LIGHT};
+    border-color: {ACCENT};
+}}
+QPushButton:disabled {{
+    color: {MUTED};
+    background: {PANEL_LABEL};
+}}
+QPushButton#primaryButton {{
+    background: {ACCENT};
+    border-color: {ACCENT};
+    color: {WHITE};
+}}
+QPushButton#primaryButton:hover {{
+    background: {ACCENT_HOVER};
+}}
 QLabel#applicationName {{
     color: {MUTED};
     padding-left: 8px;

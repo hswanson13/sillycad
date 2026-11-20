@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QStackedWidget,
     QTabBar,
     QVBoxLayout,
     QWidget,
@@ -51,22 +52,38 @@ from sillycad.core.features import (
     plane_from_face,
 )
 from sillycad.core.geometry import BASE_PLANES, Placement, outline_in_plane, volume
+from sillycad.core.profiles import ProfileError, find_profiles
 from sillycad.core.sketch import XY, Sketch
 from sillycad.gui import theme
 from sillycad.gui.browser import ModelBrowser
 from sillycad.gui.commands import SnapshotCommand, redo_shortcuts
-from sillycad.gui.dialogs import FeatureDialog, SketchPlaneDialog, StlDialog
+from sillycad.gui.dialogs import SketchPlaneDialog, StlDialog
 from sillycad.gui.icons import icon
 from sillycad.gui.marking_menu import MarkingMenu
 from sillycad.gui.navigation import NavigationBar
+from sillycad.gui.property_panel import FeaturePanel
 from sillycad.gui.ribbon import Ribbon
 from sillycad.gui.sketch_mode import SketchMode
+from sillycad.gui.tooltips import tooltip
 from sillycad.gui.viewer import Viewer
 
 log = logging.getLogger(__name__)
 
 # Very important: the whole UI is in Comic Sans (with fallbacks if it's not installed).
 UI_FONTS = ["Comic Sans MS", "Comic Neue", "Chalkboard SE"]
+_FEATURE_COMMANDS = (
+    "new",
+    "open",
+    "save",
+    "save_as",
+    "export",
+    "new_sketch",
+    "sketch_offset",
+    "extrude",
+    "pad",
+    "pocket",
+    "revolve",
+)
 
 
 class MainWindow(QMainWindow):
@@ -82,6 +99,9 @@ class MainWindow(QMainWindow):
         self.undo_group.setActiveStack(self.undo_stack)
         self.undo_stack.cleanChanged.connect(lambda _clean: self._update_title())
         self._sketch_mode: SketchMode | None = None
+        self._feature_panel: FeaturePanel | None = None
+        self._committing_feature = False
+        self._preview_fitted = False
         self.path: Path | None = None  # where the document is saved
         self.stl_settings = (STL_LINEAR_DEFLECTION, STL_ANGULAR_DEFLECTION)
         self.picked_face: TopoDS_Face | None = None  # clicked in the 3D view, to sketch on
@@ -117,11 +137,13 @@ class MainWindow(QMainWindow):
         self.tree.start_sketch_requested.connect(self._start_sketch_on_plane)
         self.tree.offset_sketch_requested.connect(self._start_offset_sketch_on_plane)
         self.tree.planes_visibility_requested.connect(self._toggle_planes)
-        dock = QDockWidget("Model", self)
-        dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
-        dock.setWidget(self.tree)
-        dock.setMinimumWidth(260)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        self.model_dock = QDockWidget("Model", self)
+        self.model_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
+        self.model_pages = QStackedWidget()
+        self.model_pages.addWidget(self.tree)
+        self.model_dock.setWidget(self.model_pages)
+        self.model_dock.setMinimumWidth(260)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.model_dock)
         self.volume_status = QLabel()
         self.statusBar().addPermanentWidget(self.volume_status)
         self._build_actions()
@@ -129,6 +151,8 @@ class MainWindow(QMainWindow):
         viewport_layout.addWidget(self.navigation)
         self._cancel_shortcut = QShortcut(QKeySequence("Esc"), self)
         self._cancel_shortcut.activated.connect(self.cancel_plane_pick)
+        self._cancel_shortcut.activated.connect(self._cancel_feature_panel)
+        self.undo_stack.indexChanged.connect(self._history_changed)
         self._update_title()
 
     # ── Actions and ribbon ──────────────────────────────────────────
@@ -144,8 +168,7 @@ class MainWindow(QMainWindow):
         action = QAction(icon(icon_name), text, self)
         if key:
             action.setShortcut(QKeySequence(key))
-        shortcut = f"<br>Shortcut: {key}" if key else ""
-        action.setToolTip(f"<b>{text}</b><br>{tip or text}.{shortcut}")
+        action.setToolTip(tooltip(text, tip or text, key))
 
         def invoke() -> None:
             self.cancel_plane_pick()
@@ -178,10 +201,10 @@ class MainWindow(QMainWindow):
             ),
             "extrude": self._action(
                 "Extrude",
-                lambda: self.ribbon.show_extrude_menu(),
+                lambda: self.add_solid(Pad),
                 "pad",
                 "E",
-                "Choose whether to join or cut",
+                "Extrude a sketch to join or cut",
             ),
             "pad": self._action(
                 "Join (Pad)…", lambda: self.add_solid(Pad), "pad", "P", "Add a sketch to the body"
@@ -273,30 +296,32 @@ class MainWindow(QMainWindow):
         actions["iso"].setShortcuts([QKeySequence("0"), QKeySequence("F6")])
         actions["look_at"].setShortcut(QKeySequence("F5"))
         actions["look_at"].setToolTip(
-            "<b>Look At</b><br>Look straight at the selected plane.<br>Shortcut: F5"
+            tooltip("Look At", "Look straight at the selected plane", "F5")
         )
-        actions["fit"].setToolTip("<b>Zoom All</b><br>Fit the model.<br>Shortcuts: F, Home")
+        actions["fit"].setToolTip(tooltip("Zoom All", "Fit the model", "F or Home"))
         actions["iso"].setToolTip(
-            "<b>Home</b><br>Show an isometric view and fit the model.<br>Shortcuts: 0, F6"
+            tooltip("Home", "Show an isometric view and fit the model", "0 or F6")
         )
         self._navigation_group = QActionGroup(self)
         for key in ("orbit", "pan", "zoom"):
             actions[key].setCheckable(True)
             self._navigation_group.addAction(actions[key])
         actions["orbit"].setChecked(True)
-        undo = self.undo_group.createUndoAction(self, "Undo")
+        undo = QAction(icon("undo"), "Undo", self)
         undo.setShortcut(QKeySequence.StandardKey.Undo)
-        undo.setIcon(icon("undo"))
-        undo.setToolTip("<b>Undo</b><br>Undo the last change.<br>Shortcut: Ctrl+Z")
-        redo = self.undo_group.createRedoAction(self, "Redo")
+        undo.setToolTip(tooltip("Undo", "Cancel the active feature or undo a change", "Ctrl+Z"))
+        redo = QAction(icon("redo"), "Redo", self)
         redo.setShortcuts(redo_shortcuts())
-        redo.setIcon(icon("redo"))
-        redo.setToolTip("<b>Redo</b><br>Redo the last undone change.<br>Shortcut: Ctrl+Shift+Z")
-        undo.triggered.connect(self.cancel_plane_pick)
-        redo.triggered.connect(self.cancel_plane_pick)
+        redo.setToolTip(tooltip("Redo", "Redo the last undone change", "Ctrl+Shift+Z or Ctrl+Y"))
+        undo.triggered.connect(self._undo)
+        redo.triggered.connect(self._redo)
         self.addAction(undo)
         self.addAction(redo)
         actions.update(undo=undo, redo=redo)
+        self.undo_group.canUndoChanged.connect(self._sync_history_actions)
+        self.undo_group.canRedoChanged.connect(self._sync_history_actions)
+        self.undo_group.undoTextChanged.connect(self._sync_history_actions)
+        self.undo_group.redoTextChanged.connect(self._sync_history_actions)
         self.show_sketches = actions["sketches"]
         self.show_planes = actions["planes"]
         for toggle in (self.show_sketches, self.show_planes):
@@ -304,11 +329,37 @@ class MainWindow(QMainWindow):
             toggle.setChecked(True)
         self.show_planes.toggled.connect(self.tree.set_planes_visible)
         self.actions = actions
+        self._sync_history_actions()
         self.ribbon = Ribbon(actions, self)
         self.setMenuWidget(self.ribbon)
 
     def _toggle_planes(self) -> None:
         self.show_planes.trigger()
+
+    def _sync_history_actions(self) -> None:
+        undo, redo = self.actions["undo"], self.actions["redo"]
+        undo.setEnabled(self.undo_group.canUndo() or self._feature_panel is not None)
+        redo.setEnabled(self.undo_group.canRedo())
+        undo_text = self.undo_group.undoText() if self._feature_panel is None else ""
+        redo_text = self.undo_group.redoText()
+        undo.setText(f"Undo {undo_text}" if undo_text else "Undo")
+        redo.setText(f"Redo {redo_text}" if redo_text else "Redo")
+
+    def _undo(self) -> None:
+        self.cancel_plane_pick()
+        if self._feature_panel is not None:
+            self._close_feature_panel()
+        else:
+            self.undo_group.undo()
+
+    def _redo(self) -> None:
+        self.cancel_plane_pick()
+        self._cancel_feature_panel()
+        self.undo_group.redo()
+
+    def _history_changed(self) -> None:
+        if self._feature_panel is not None and not self._committing_feature:
+            self._close_feature_panel()
 
     def _select_plane(self, plane: str | None) -> None:
         self.picked_plane = plane
@@ -399,6 +450,9 @@ class MainWindow(QMainWindow):
 
     def update_view(self, fit: bool = False, model: Model | None = None) -> None:
         """Redraw the 3D view (optionally for a preview model)."""
+        if model is None and self._feature_panel is not None:
+            self._preview(self._feature_panel.feature)
+            return
         model = model or self.model
         wires = []
         if self.show_sketches.isChecked():
@@ -413,6 +467,9 @@ class MainWindow(QMainWindow):
             self.picked_plane = None
 
     def _picked(self, shapes: list[TopoDS_Shape]) -> None:
+        if self._feature_panel is not None:
+            self.statusBar().showMessage("Choose a sketch profile in the Property Panel.")
+            return
         plane = next(
             (name for shape in shapes if (name := self.viewer.plane_name(shape)) is not None),
             None,
@@ -467,7 +524,9 @@ class MainWindow(QMainWindow):
         else:
             trial.features.append(feature)
         model = recompute(trial)
-        self.update_view(model=model)
+        fit = self.model.shape is None and model.shape is not None and not self._preview_fitted
+        self.update_view(fit=fit, model=model)
+        self._preview_fitted |= fit
         return model.errors.get(feature.id)
 
     # ── Feature commands ────────────────────────────────────────────
@@ -502,6 +561,7 @@ class MainWindow(QMainWindow):
         self._open_sketch(feature, new=True)
 
     def _open_sketch(self, feature: SketchFeature, *, new: bool) -> None:
+        self._cancel_feature_panel()
         mode = SketchMode(self, feature, new)
         self._sketch_mode = mode
         mode.finished.connect(lambda sketch, save: self._finish_sketch(mode, sketch, save))
@@ -533,15 +593,86 @@ class MainWindow(QMainWindow):
         if sketch is None:
             QMessageBox.information(self, kind.__name__, "Draw a sketch first (New Sketch).")
             return
+        self._open_feature_panel(self._new_solid(kind, sketch.id), editing=False)
+
+    def _new_solid(self, kind: type[SolidFeature], sketch_id: str) -> SolidFeature:
+        draft = copy.deepcopy(self.doc)
         name = "Revolution" if kind is Revolve else "Extrusion"
-        feature = kind(self.doc.new_id(), self.doc.new_name(name), sketch.id)
-        dialog = FeatureDialog(feature, self.doc.sketches(), self._preview, self)
-        if dialog.exec():
-            new = dialog.feature
-            self.change(f"Add {new.name}", lambda d: d.features.append(new))
-            self.tree.select(new.id)
+        return kind(draft.new_id(), draft.new_name(name), sketch_id)
+
+    def _open_feature_panel(self, feature: SolidFeature, *, editing: bool) -> None:
+        self._cancel_feature_panel()
+        self._preview_fitted = False
+        sketches = self.doc.sketches(before=feature.id if editing else None)
+        panel = FeaturePanel(feature, sketches, self._preview, editing=editing, parent=self)
+        self._feature_panel = panel
+        panel.accepted.connect(lambda value: self._commit_feature(value, keep_open=False))
+        panel.applied.connect(lambda value: self._commit_feature(value, keep_open=True))
+        panel.cancelled.connect(self._close_feature_panel)
+        self.model_pages.addWidget(panel)
+        self.model_pages.setCurrentWidget(panel)
+        self.model_dock.setWindowTitle(feature.name)
+        for key in _FEATURE_COMMANDS:
+            self.actions[key].setEnabled(False)
+        self._sync_history_actions()
+        self.statusBar().showMessage("Select the profile and adjust the feature.")
+
+    def _commit_feature(self, feature: SolidFeature, *, keep_open: bool) -> None:
+        panel = self._feature_panel
+        if panel is None:
+            return
+        original = self.doc.find(feature.id)
+        if panel.editing and not isinstance(original, type(feature)):
+            self._close_feature_panel()
+            self.statusBar().showMessage("The feature changed; reopen the command.", 8000)
+            return
+        if not panel.editing and (original is not None or feature.id != f"f{self.doc.next_id}"):
+            self._close_feature_panel()
+            self.statusBar().showMessage("The document changed; reopen the command.", 8000)
+            return
+        self._committing_feature = True
+        try:
+            if panel.editing:
+                if feature != original:
+                    self.change(f"Edit {feature.name}", lambda doc: doc.replace(feature))
+            else:
+                self.doc.new_id()
+                self.change(f"Add {feature.name}", lambda doc: doc.features.append(feature))
+                self.tree.select(feature.id)
+        finally:
+            self._committing_feature = False
+        committed_name = feature.name
+        if keep_open:
+            if not panel.editing:
+                next_identity = self._new_solid(type(feature), feature.sketch_id)
+                feature = dataclasses.replace(feature, id=next_identity.id, name=next_identity.name)
+                self.model_dock.setWindowTitle(feature.name)
+                panel.next_feature(feature)
+            self.statusBar().showMessage(f"Applied {committed_name}.")
         else:
-            self.update_view()  # drop the preview
+            self._close_feature_panel()
+
+    def _cancel_feature_panel(self) -> None:
+        if self._feature_panel is not None:
+            self._close_feature_panel()
+
+    def _close_feature_panel(self) -> None:
+        panel, self._feature_panel = self._feature_panel, None
+        if panel is None:
+            return
+        self.model_pages.setCurrentWidget(self.tree)
+        self.model_pages.removeWidget(panel)
+        panel.deleteLater()
+        self.model_dock.setWindowTitle("Model")
+        for key in _FEATURE_COMMANDS:
+            self.actions[key].setEnabled(True)
+        self._sync_history_actions()
+        self.update_view()
+        if self.model.errors:
+            fid, message = next(iter(self.model.errors.items()))
+            self.statusBar().showMessage(f"⚠ {self.doc.find(fid).name} failed: {message}")
+        else:
+            self.statusBar().showMessage("Ready")
 
     def _default_sketch(self) -> SketchFeature | None:
         """The selected sketch, else the newest sketch nothing uses yet, else the newest."""
@@ -549,6 +680,18 @@ class MainWindow(QMainWindow):
         if isinstance(selected, SketchFeature):
             return selected
         sketches = self.doc.sketches()
+        if len(sketches) > 1:
+            closed = []
+            for sketch in sketches:
+                try:
+                    closed.extend([sketch] * len(find_profiles(sketch.sketch)))
+                except ProfileError:
+                    continue
+                except Exception as exc:
+                    log.exception("Could not inspect profiles in %s", sketch.name)
+                    self.statusBar().showMessage(f"Could not inspect {sketch.name}: {exc}", 8000)
+            if len(closed) == 1:
+                return closed[0]
         unused = [s for s in sketches if not self.doc.users(s.id)]
         return (unused or sketches or [None])[-1]
 
@@ -557,11 +700,7 @@ class MainWindow(QMainWindow):
         if isinstance(f, SketchFeature):
             self._open_sketch(f, new=False)
         elif f is not None:
-            dialog = FeatureDialog(f, self.doc.sketches(before=fid), self._preview, self)
-            if dialog.exec():
-                self.change(f"Edit {f.name}", lambda d: d.replace(dialog.feature))
-            else:
-                self.update_view()
+            self._open_feature_panel(f, editing=True)
 
     def rename_feature(self, fid: str, name: str) -> None:
         f = self.doc.find(fid)
@@ -619,6 +758,7 @@ class MainWindow(QMainWindow):
         self.tree.set_document_name(f"{name}{unsaved}")
 
     def _set_document(self, doc: Document, path: Path | None) -> None:
+        self._cancel_feature_panel()
         self.cancel_plane_pick()
         self.doc, self.path = doc, path
         self.picked_face = None
@@ -705,6 +845,7 @@ class MainWindow(QMainWindow):
         if not self.maybe_save():
             event.ignore()
             return
+        self._cancel_feature_panel()
         if mode is not None:
             self._finish_sketch(mode, mode.session.sketch, False)
         self.undo_stack.cleanChanged.disconnect()  # no title updates while Qt tears down

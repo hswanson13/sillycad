@@ -19,6 +19,7 @@ class MarkingMenu(QMenu):
         self, actions: dict[str, QAction], parent: QWidget | None = None, *, sketch: bool = False
     ) -> None:
         super().__init__(parent)
+        self.setToolTipsVisible(True)
         controls = QWidget()
         controls.setObjectName("markingControls")
         grid = QGridLayout(controls)
@@ -107,6 +108,7 @@ class MarkingMenu(QMenu):
         ):
             self.addAction(actions[key])
         file_menu = self.addMenu("File")
+        file_menu.setToolTipsVisible(True)
         file_menu.addActions(
             [actions[key] for key in ("new", "open", "save", "save_as", "export", "quit")]
         )

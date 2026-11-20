@@ -25,6 +25,7 @@ from sillycad.gui.marking_menu import MarkingMenu
 from sillycad.gui.sketch_interaction import SketchInteraction
 from sillycad.gui.sketch_scene import SketchScene
 from sillycad.gui.sketch_session import SketchSession
+from sillycad.gui.tooltips import tooltip
 from sillycad.sketch_math import dimension_anchor
 
 if TYPE_CHECKING:
@@ -138,8 +139,7 @@ class SketchMode(QObject):
         action = QAction(icon(icon_name), text, self.window)
         if shortcut:
             action.setShortcut(QKeySequence(shortcut))
-        hint = f"<br>Shortcut: {shortcut}" if shortcut else ""
-        action.setToolTip(f"<b>{text}</b><br>{tip}.{hint}")
+        action.setToolTip(tooltip(text, tip, shortcut))
         self.window.addAction(action)
         self.actions[key] = action
         return action
@@ -224,6 +224,9 @@ class SketchMode(QObject):
         )
         self.constraint_list_toggle = QToolButton()
         self.constraint_list_toggle.setText("Constraints")
+        self.constraint_list_toggle.setToolTip(
+            tooltip("Constraints", "Show or hide the list of sketch constraints")
+        )
         self.constraint_list_toggle.setCheckable(True)
         self.constraint_list_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.constraint_list_toggle.setArrowType(Qt.ArrowType.RightArrow)
