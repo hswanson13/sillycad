@@ -2,9 +2,9 @@
 
 # SillyCAD Progress
 
-**Where we are:** 🎉 M1–M5, sketching on faces, U1 (shell and theme), and U2 (viewport) are done. 66 tests pass.
+**Where we are:** 🎉 M1–M5, sketching on faces, U1 (shell and theme), U2 (viewport), and U3 (sketch environment) are done. The headless suite has 83 passing tests; the additional native-window test passes when enabled.
 
-**Needs you:** try U2 below and confirm before U3 (sketch environment).
+**Needs you:** try U3 below and confirm before starting U4.
 
 Legend: ✅ done · 🔨 in progress · ⬜ not started
 
@@ -108,11 +108,37 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 - [x] Separate sketch editor, feature dialogs, live preview, save / export and undo / redo remain in place
 - [x] Tests cover plane selection, offsets, Look At, command cancellation and ordinary face-owner handling (66 tests total)
 
-**Still to come:** sketching in the main window (U3) and feature Property Panels (U4). U3 begins with a measured native-viewport sketching spike and a report before the full sketch environment is built. It will also add a click-and-drag rectangle made of ordinary lines with horizontal / vertical constraints, and keep the separate constraint / dimension toolbar normally hidden with an easy way to reopen its controls.
+## ✅ U3: Sketch environment
+
+- [x] Tested native OCCT sketch drawing over a part using 20 lines, 40 endpoints, 21 constraints, a grid and representative constraint / dimension labels. A simulated mouse drag cast rays onto the sketch plane and used the existing live solver.
+- [x] With incremental presentation updates, 120 mouse-move handlers took 16.43 ms median and 16.85 ms at the 95th percentile, including redraw; 102 were within 16.67 ms and none exceeded 33.33 ms. The projection also worked after orbiting. This is a prototype measurement, not a complete sketch editor or a guarantee for larger sketches.
+- [x] Native OCCT sketch presentations keep the part visible in the main viewport. Camera animation, adaptive grid, reference-outline snapping, orbit and `F5` Look At work on sketch planes.
+- [x] Click-and-drag rectangles create ordinary connected lines with horizontal / vertical constraints. Constraint buttons and the constraint list are hidden until opened.
+- [x] Smart Dimension and double-click editing use an in-canvas value box. Constraint glyphs can be selected and deleted, with `F8` / `F9` to show / hide them; the sketch marking menu provides drawing and editing commands.
+- [x] Local sketch undo / redo, live drag solving, solver and profile feedback, and one main-window undo step on Finish remain available.
+- [x] The integrated 20-line drag check recorded 115 live-solve events: 16.63 ms median, 19.16 ms at the 95th percentile, and 23.97 ms maximum; none exceeded 33.33 ms. This includes Qt test-event overhead and is not a guarantee for larger sketches.
+- [x] Ruff passes. The headless suite has 83 passed and one opt-in native-window test skipped; that native test passes separately and covers face sketching, navigation, dimension / glyph editing, preview, save / reopen and STL export.
+- [x] You chose to defer selecting regions from overlapping circles. Today the profile finder rejects the intersections, and solids use every profile rather than storing a region choice. Supporting that feature requires modeling and file-format changes outside U3's UI-only scope.
+
+**Still to come:** feature Property Panels and polish (U4).
 
 ---
 
 ## How to try it
+
+### U3
+
+```bash
+conda activate sillycad
+python -m sillycad
+```
+
+1. Click **Start 2D Sketch**, select XY, and drag **Rectangle** between opposite corners. The right panel should report one closed profile. Select an edge, press `D`, enter a length, and double-click the label to change it.
+2. Click **Constraints** in the ribbon to reveal the normally hidden buttons. Open **Constraints** in the sketch-status panel to see the list. Click a glyph and press `Del`; `Ctrl+Z` restores it. Try `F9` and `F8` to hide and show glyphs.
+3. Draw a line chain with `L`, then right-click to stop it. Try the sketch marking menu, construction toggle, local undo / redo, and a stray line or overlapping circles to see profile feedback.
+4. Finish (`Ctrl+Enter`), choose **Extrude → Join**, and make a block. Start a new sketch on its flat face: the part should stay visible behind the sketch and the face outline should snap at its corners.
+5. Orbit with Shift+middle-drag, pan with middle-drag, and zoom with the wheel or right-drag. Press `F5` to face the sketch again. Finish, then undo / redo once in the main window; save, reopen, and export STL.
+6. Run `ruff check .`, `ruff format --check .`, and `pytest`. To run the extra native-window check on X11 / XWayland, use `SILLYCAD_NATIVE_GUI_TESTS=1 QT_QPA_PLATFORM=xcb pytest -q tests/test_sketch_native.py`.
 
 ### U2
 
@@ -121,14 +147,14 @@ conda activate sillycad
 python -m sillycad
 ```
 
-1. Click **Start 2D Sketch** (`N`), then select a highlighted base plane in the viewport or a plane under **Origin**. Alternatively, select a plane first and start the command. The separate sketch editor should open immediately, without a plane dialog. Try `Esc` and right-click to cancel while waiting for a plane.
+1. Click **Start 2D Sketch** (`N`), then select a highlighted base plane in the viewport or a plane under **Origin**. Alternatively, select a plane first and start the command. The sketch opens immediately, without a plane dialog. Try `Esc` and right-click to cancel while waiting for a plane.
 2. Draw a closed rectangle with the Line tool, finish the sketch, and use **Extrude** (`E`) → **Join (Pad)**. Change the length and check the live preview, then click OK. The browser should show **Extrusion1** with **Sketch1** nested underneath.
 3. Click **Start 2D Sketch** and then a flat face of the solid. Its outline should appear as a snappable guide in the sketch editor. Cancel that sketch; try selecting the face before starting a sketch as well.
 4. Open the **Start 2D Sketch** dropdown → **Sketch with Offset…**, choose a base plane and enter an offset. Alternatively, right-click a browser plane and choose **Sketch with Offset…**.
 5. Click different ViewCube faces and corners; use `F6` to return to the isometric Home view. Try each navigation-bar mode, middle-drag pan, right-drag zoom, the wheel, and `Home` for Zoom All. Select a plane, planar face, or browser sketch and choose **Look At**.
 6. Right-click the viewport to try the marking menu. Hide and show Origin, switch Shaded / Wireframe, and check that the ViewCube still works after the model changes.
 7. Save the part, make an edit, and check the `*` in the title and document tab. Undo / redo, reopen the part, and export STL; the status bar reports its triangle count.
-8. Run `ruff check .`, `ruff format --check .` and `pytest`; all 66 tests should pass.
+8. Run `ruff check .`, `ruff format --check .` and `pytest`.
 
 **Main-window keys**
 
@@ -142,7 +168,7 @@ python -m sillycad
 | Front / Top / Right | `1` / `2` / `3` | Shaded / Wireframe | `S` / `W` |
 | Cancel plane selection | `Esc` / right-click | Marking menu | right-click viewport |
 
-The sketch editor keys are unchanged; see the table in the README. The M1–M5 walkthroughs below describe the historical UI and are superseded by U2 where they differ.
+For current sketch controls, see the table in the README. The M1–M5 walkthroughs below describe the historical UI and are superseded by U3 where they differ.
 
 ### M1
 
@@ -207,16 +233,17 @@ python -m sillycad
 
 | Draw | Key | Constrain | Key | Dimension | Key |
 |---|---|---|---|---|---|
-| Select / cancel | `Esc` | Coincident | `I` | Distance | `D` |
+| Select / cancel | `Esc` | Coincident | `I` | Smart Dimension | `D` |
 | Point | `P` | Horizontal | `H` | Horizontal distance | `Shift+H` |
 | Line | `L` | Vertical | `V` | Vertical distance | `Shift+V` |
 | Arc | `A` | Parallel | `Shift+P` | Angle | `Shift+A` |
 | Circle | `C` | Perpendicular | `N` | Radius | `R` |
 | Construction | `G` | Equal | `E` | Diameter | `Shift+D` |
 | Delete | `Del` | Point on line | `O` | | |
-| Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` | Tangent | `T` | | |
+| Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` or `Ctrl+Y` | Tangent | `T` | | |
 | Fit view | `Home` | Midpoint | `M` | | |
-| Finish | `Ctrl+Enter` | Fix | `F` | | |
+| Finish | `Ctrl+Enter` | Fix | `F` | Look at sketch | `F5` |
+| Show / hide glyphs | `F8` / `F9` | | | | |
 
 Mouse: scroll to zoom, middle-drag to pan, right-click to stop drawing. Shift- or Ctrl-click selects more than one item.
 

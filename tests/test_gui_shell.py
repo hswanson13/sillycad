@@ -14,7 +14,7 @@ from OCC.Core.TopAbs import TopAbs_FACE
 from OCC.Core.TopExp import TopExp_Explorer
 from OCC.Core.TopoDS import topods
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, Signal
-from PySide6.QtGui import QAction, QKeyEvent, QKeySequence, QMouseEvent
+from PySide6.QtGui import QKeyEvent, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import QApplication, QToolButton, QWidget
 
 from sillycad.core.document import Document
@@ -24,7 +24,7 @@ from sillycad.core.sketch import Sketch
 from sillycad.gui.browser import ModelBrowser
 from sillycad.gui.main_window import MainWindow
 from sillycad.gui.marking_menu import MarkingMenu
-from sillycad.gui.sketch_editor import SketchEditor
+from sillycad.gui.sketch_session import SketchSession
 from sillycad.gui.viewer import Viewer
 
 
@@ -204,24 +204,23 @@ def test_document_tab_tracks_save_undo_and_redo(window: MainWindow, tmp_path: Pa
     window.undo_stack.undo()
 
 
-def test_sketch_editor_retains_both_redo_shortcuts(app: QApplication) -> None:
-    editor = SketchEditor(Sketch(), "Sketch1")
+def test_sketch_editor_retains_both_redo_shortcuts(window: MainWindow) -> None:
+    editor = SketchSession(Sketch())
+    window.undo_group.addStack(editor.undo_stack)
+    window.undo_group.setActiveStack(editor.undo_stack)
 
     def add_point(sketch: Sketch) -> None:
         sketch.add_point(1, 2)
 
     editor.edit("Add point", add_point)
     editor.undo_stack.undo()
-    redo = next(
-        action
-        for action in editor.findChildren(QAction)
-        if QKeySequence("Ctrl+Shift+Z") in action.shortcuts()
-    )
+    redo = window.actions["redo"]
+    assert QKeySequence("Ctrl+Shift+Z") in redo.shortcuts()
     assert QKeySequence("Ctrl+Y") in redo.shortcuts()
     redo.trigger()
     assert len(editor.sketch.geo) == 1
-    editor.undo_stack.clear()
-    editor.close()
+    window.undo_group.setActiveStack(window.undo_stack)
+    window.undo_group.removeStack(editor.undo_stack)
 
 
 def test_command_first_sketch_plane_and_cancel(

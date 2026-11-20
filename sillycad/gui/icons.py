@@ -55,14 +55,27 @@ _SHAPES = {
         '<path d="M3 16c3-5 8-8 13-8s10 3 13 8c-3 5-8 8-13 8S6 21 3 16z '
         'M16 12a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"/>'
     ),
+    "select": '<path d="M6 3v23l6-6 4 9 4-2-4-9 9-1z"/>',
+    "line": '<path d="M5 25 27 7"/><circle cx="5" cy="25" r="2"/><circle cx="27" cy="7" r="2"/>',
+    "circle": '<circle cx="16" cy="16" r="11"/><circle cx="16" cy="16" r="1"/>',
+    "arc": '<path d="M5 20A11 11 0 0 1 26 10 M16 20h9 M16 20V9"/><circle cx="16" cy="20" r="1"/>',
+    "rectangle": (
+        '<path d="M5 7h22v18H5z"/><circle cx="5" cy="7" r="2"/><circle cx="27" cy="25" r="2"/>'
+    ),
+    "dimension": '<path d="M6 8v16 M26 8v16 M6 16h20 M10 13l-4 3 4 3 M22 13l4 3-4 3"/>',
+    "constraint": '<path d="M5 10h22 M5 22h22 M12 6v20 M20 6v20"/>',
+    "construction": '<path d="M4 25 11 18 M15 14l4-4 M23 6l5-4"/>',
+    "finish": '<path d="m5 17 7 7L27 7"/>',
+    "delete": '<path d="M7 9h18 M12 9V5h8v4 M9 9l2 18h10l2-18 M14 13v10 M18 13v10"/>',
 }
 
 
 def icon(name: str, *, error: bool = False) -> QIcon:
     """Render an original icon, optionally with a failure badge."""
+    stroke = theme.SUCCESS if name == "finish" else theme.ACCENT_HOVER
     svg = (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" '
-        f'fill="none" stroke="{theme.ACCENT_HOVER}" stroke-width="2" '
+        f'fill="none" stroke="{stroke}" stroke-width="2" '
         f'stroke-linecap="round" stroke-linejoin="round">{_SHAPES[name]}</svg>'
     )
     pixmap = QPixmap(32, 32)

@@ -22,6 +22,7 @@ from PySide6.QtGui import (
     QFont,
     QKeySequence,
     QShortcut,
+    QUndoGroup,
     QUndoStack,
 )
 from PySide6.QtWidgets import (
@@ -59,7 +60,7 @@ from sillycad.gui.icons import icon
 from sillycad.gui.marking_menu import MarkingMenu
 from sillycad.gui.navigation import NavigationBar
 from sillycad.gui.ribbon import Ribbon
-from sillycad.gui.sketch_editor import SketchEditor
+from sillycad.gui.sketch_mode import SketchMode
 from sillycad.gui.viewer import Viewer
 
 log = logging.getLogger(__name__)
@@ -76,7 +77,11 @@ class MainWindow(QMainWindow):
         self.doc = Document()
         self.model = Model(None, {})
         self.undo_stack = QUndoStack(self)
+        self.undo_group = QUndoGroup(self)
+        self.undo_group.addStack(self.undo_stack)
+        self.undo_group.setActiveStack(self.undo_stack)
         self.undo_stack.cleanChanged.connect(lambda _clean: self._update_title())
+        self._sketch_mode: SketchMode | None = None
         self.path: Path | None = None  # where the document is saved
         self.stl_settings = (STL_LINEAR_DEFLECTION, STL_ANGULAR_DEFLECTION)
         self.picked_face: TopoDS_Face | None = None  # clicked in the 3D view, to sketch on
@@ -266,6 +271,10 @@ class MainWindow(QMainWindow):
         }
         actions["fit"].setShortcuts([QKeySequence("F"), QKeySequence("Home")])
         actions["iso"].setShortcuts([QKeySequence("0"), QKeySequence("F6")])
+        actions["look_at"].setShortcut(QKeySequence("F5"))
+        actions["look_at"].setToolTip(
+            "<b>Look At</b><br>Look straight at the selected plane.<br>Shortcut: F5"
+        )
         actions["fit"].setToolTip("<b>Zoom All</b><br>Fit the model.<br>Shortcuts: F, Home")
         actions["iso"].setToolTip(
             "<b>Home</b><br>Show an isometric view and fit the model.<br>Shortcuts: 0, F6"
@@ -275,11 +284,11 @@ class MainWindow(QMainWindow):
             actions[key].setCheckable(True)
             self._navigation_group.addAction(actions[key])
         actions["orbit"].setChecked(True)
-        undo = self.undo_stack.createUndoAction(self, "Undo")
+        undo = self.undo_group.createUndoAction(self, "Undo")
         undo.setShortcut(QKeySequence.StandardKey.Undo)
         undo.setIcon(icon("undo"))
         undo.setToolTip("<b>Undo</b><br>Undo the last change.<br>Shortcut: Ctrl+Z")
-        redo = self.undo_stack.createRedoAction(self, "Redo")
+        redo = self.undo_group.createRedoAction(self, "Redo")
         redo.setShortcuts(redo_shortcuts())
         redo.setIcon(icon("redo"))
         redo.setToolTip("<b>Redo</b><br>Redo the last undone change.<br>Shortcut: Ctrl+Shift+Z")
@@ -333,6 +342,15 @@ class MainWindow(QMainWindow):
 
     def look_at(self) -> None:
         """Look directly at the selected plane, flat face or sketch."""
+        if self._sketch_mode is not None:
+            feature = self._sketch_mode.feature
+            self.viewer.animate_look_at(
+                feature.placement(),
+                feature.offset,
+                empty_sketch=self.model.shape is None and not self._sketch_mode.session.sketch.geo,
+            )
+            self.statusBar().showMessage("Looking at the sketch plane.")
+            return
         selected = self._picked_plane()
         if selected is not None:
             name, offset, face = selected
@@ -481,14 +499,34 @@ class MainWindow(QMainWindow):
             self.doc.new_id(), self.doc.new_name("Sketch"), plane, offset,
             face=face if plane == "Face" else None,
         )  # fmt: skip
-        editor = SketchEditor(Sketch(), feature.name, self, self._outline(feature))
-        editor.finished.connect(
-            lambda sketch: self.change(
-                f"Add {feature.name}",
-                lambda d: d.features.append(dataclasses.replace(feature, sketch=sketch)),
-            )
+        self._open_sketch(feature, new=True)
+
+    def _open_sketch(self, feature: SketchFeature, *, new: bool) -> None:
+        mode = SketchMode(self, feature, new)
+        self._sketch_mode = mode
+        mode.finished.connect(lambda sketch, save: self._finish_sketch(mode, sketch, save))
+        self._update_title()
+
+    def _finish_sketch(self, mode: SketchMode, sketch: Sketch, save: bool) -> None:
+        mode.close()
+        self._sketch_mode = None
+        if save and (mode.new or sketch != mode.feature.sketch):
+            feature = dataclasses.replace(mode.feature, sketch=copy.deepcopy(sketch))
+            if mode.new:
+                self.change(f"Add {feature.name}", lambda doc: doc.features.append(feature))
+            else:
+                self.change(f"Edit {feature.name}", lambda doc: doc.replace(feature))
+        else:
+            self.update_view()
+        self._update_title()
+        mode.deleteLater()
+
+    def confirm_discard_sketch(self) -> bool:
+        """Ask before discarding edits that have not been finished."""
+        answer = QMessageBox.question(
+            self, "Discard sketch changes?", "Leave the sketch without saving your changes?"
         )
-        editor.show()
+        return answer == QMessageBox.StandardButton.Yes
 
     def add_solid(self, kind: type[SolidFeature]) -> None:
         sketch = self._default_sketch()
@@ -517,13 +555,7 @@ class MainWindow(QMainWindow):
     def edit_feature(self, fid: str) -> None:
         f = self.doc.find(fid)
         if isinstance(f, SketchFeature):
-            editor = SketchEditor(f.sketch, f.name, self, self._outline(f))
-            editor.finished.connect(
-                lambda sketch: self.change(
-                    f"Edit {f.name}", lambda d: setattr(d.find(fid), "sketch", sketch)
-                )
-            )
-            editor.show()
+            self._open_sketch(f, new=False)
         elif f is not None:
             dialog = FeatureDialog(f, self.doc.sketches(before=fid), self._preview, self)
             if dialog.exec():
@@ -578,7 +610,10 @@ class MainWindow(QMainWindow):
 
     def _update_title(self) -> None:
         name = self.path.name if self.path else "Untitled"
-        unsaved = "" if self.undo_stack.isClean() else " *"
+        sketch_dirty = (
+            self._sketch_mode is not None and not self._sketch_mode.session.undo_stack.isClean()
+        )
+        unsaved = " *" if not self.undo_stack.isClean() or sketch_dirty else ""
         self.setWindowTitle(f"{name}{unsaved} — SillyCAD")
         self.document_tabs.setTabText(0, f"{name}{unsaved}")
         self.tree.set_document_name(f"{name}{unsaved}")
@@ -659,9 +694,19 @@ class MainWindow(QMainWindow):
         return True
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        mode = self._sketch_mode
+        if (
+            mode is not None
+            and not mode.session.undo_stack.isClean()
+            and not self.confirm_discard_sketch()
+        ):
+            event.ignore()
+            return
         if not self.maybe_save():
             event.ignore()
             return
+        if mode is not None:
+            self._finish_sketch(mode, mode.session.sketch, False)
         self.undo_stack.cleanChanged.disconnect()  # no title updates while Qt tears down
         event.accept()
 

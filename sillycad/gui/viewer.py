@@ -5,8 +5,8 @@ A left click (without dragging) picks a face; ``sig_topods_selected`` reports it
 """
 
 from OCC.Display.backend import load_backend
-from PySide6.QtCore import QPoint, QPointF, Qt, Signal
-from PySide6.QtGui import QFontInfo, QMouseEvent
+from PySide6.QtCore import QPoint, QPointF, Qt, QTimer, Signal
+from PySide6.QtGui import QFontDatabase, QFontInfo, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication, QWidget
 
 load_backend("pyside6")  # must run before importing qtDisplay
@@ -25,7 +25,8 @@ from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_MakeFace  # noqa: E402
 from OCC.Core.Geom import Geom_Axis2Placement  # noqa: E402
 from OCC.Core.gp import gp_Ax2, gp_Pln, gp_Pnt  # noqa: E402
 from OCC.Core.Graphic3d import (  # noqa: E402
-    Graphic3d_NOM_ALUMINIUM,
+    Graphic3d_Camera,
+    Graphic3d_NOM_PLASTER,
     Graphic3d_TMF_TriedronPers,
     Graphic3d_TransformPers,
     Graphic3d_Vec2i,
@@ -57,6 +58,7 @@ class Viewer(qtViewer3d):
 
     marking_menu_requested = Signal(QPoint)
     plane_pick_cancelled = Signal()
+    camera_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -65,6 +67,10 @@ class Viewer(qtViewer3d):
         self._navigation_mode = "orbit"
         self._picking_plane = False
         self._plane_shapes: dict[str, TopoDS_Shape] = {}
+        self._camera_animation: AIS_AnimationCamera | None = None
+        self._camera_end: Graphic3d_Camera | None = None
+        self._camera_timer = QTimer(self)
+        self._camera_timer.timeout.connect(self._animate_camera)
 
     def init(self) -> None:
         """Create the OCCT viewer. Needs a real native window, so call after show()."""
@@ -82,6 +88,13 @@ class Viewer(qtViewer3d):
             display.Context.HighlightStyle(kind).SetColor(_color(theme.VIEW_SELECTED))
 
         self._font = QFontInfo(QApplication.font()).family()
+        styles = QFontDatabase.styles(self._font)
+        if (
+            styles
+            and all("italic" in style.lower() or "oblique" in style.lower() for style in styles)
+            and "FreeSans" in QFontDatabase.families()
+        ):
+            self._font = "FreeSans"
         self._cube = AIS_ViewCube()
         self._cube.SetTransformPersistence(
             Graphic3d_TransformPers(
@@ -97,8 +110,13 @@ class Viewer(qtViewer3d):
         self._cube.SetFixedAnimationLoop(True)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        self.stop_camera_animation()
         self._press_at = event.position()
         super().mousePressEvent(event)
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        self.stop_camera_animation()
+        super().wheelEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if (
@@ -174,7 +192,7 @@ class Viewer(qtViewer3d):
             display.Context.Display(trihedron, False)
         if solid is not None:
             body = display.DisplayShape(
-                solid, material=Graphic3d_NOM_ALUMINIUM, color=_color(theme.VIEW_BODY), update=False
+                solid, material=Graphic3d_NOM_PLASTER, color=_color(theme.VIEW_BODY), update=False
             )[0]
             body.Attributes().SetFaceBoundaryDraw(True)
             body.Attributes().SetFaceBoundaryAspect(
@@ -230,14 +248,67 @@ class Viewer(qtViewer3d):
 
     def look_at(self, placement: Placement, offset: float = 0.0) -> None:
         """Look directly at a sketch plane with its vertical axis pointing up."""
+        self.stop_camera_animation()
         axes = plane_axes(placement, offset)
         normal, up = axes.Direction(), axes.YDirection()
         self._display.View.SetProj(normal.X(), normal.Y(), normal.Z())
         self._display.View.SetUp(up.X(), up.Y(), up.Z())
         self._display.FitAll()
 
+    def animate_look_at(
+        self, placement: Placement, offset: float = 0.0, *, empty_sketch: bool = False
+    ) -> None:
+        """Animate the camera from the current view to a sketch plane."""
+        view = self._display.View
+        start = Graphic3d_Camera()
+        start.Copy(view.Camera())
+        self.look_at(placement, offset)
+        if empty_sketch:
+            bounds = Bnd_Box()
+            transform = plane_trsf(placement, offset)
+            for x, y in ((-50, -50), (-50, 50), (50, -50), (50, 50)):
+                bounds.Add(gp_Pnt(x, y, 0).Transformed(transform))
+            view.FitAll(bounds, 0.1, True)
+        else:
+            view.FitAll(0.1, True)
+        end = Graphic3d_Camera()
+        end.Copy(view.Camera())
+        view.SetCamera(start)
+        animation = AIS_AnimationCamera("SketchView", view)
+        animation.SetCameraStart(start)
+        animation.SetCameraEnd(end)
+        animation.SetOwnDuration(0.3)
+        animation.StartTimer(0.0, 1.0, True)
+        self._camera_animation = animation
+        self._camera_end = end
+        self._camera_timer.start(16)
+
+    def _animate_camera(self) -> None:
+        animation = self._camera_animation
+        if animation is None:
+            self._camera_timer.stop()
+            return
+        elapsed = animation.UpdateTimer()
+        self._display.View.Redraw()
+        if animation.IsStopped() or elapsed >= animation.Duration():
+            self.stop_camera_animation()
+
+    def stop_camera_animation(self) -> None:
+        """Finish a running camera animation before accepting another command."""
+        self._camera_timer.stop()
+        if self._camera_animation is not None:
+            self._camera_animation.Stop()
+            if self._camera_end is not None:
+                self._display.View.SetCamera(self._camera_end)
+                self._display.View.MustBeResized()
+                self._display.View.Redraw()
+            self.camera_changed.emit()
+        self._camera_animation = None
+        self._camera_end = None
+
     def set_view(self, name: str) -> None:
         """Standard view: "front", "top", "right", "iso" or "fit"."""
+        self.stop_camera_animation()
         display = self._display
         {
             "front": display.View_Front,
@@ -247,6 +318,7 @@ class Viewer(qtViewer3d):
             "fit": lambda: None,
         }[name]()
         display.FitAll()
+        self.camera_changed.emit()
 
     def set_mode(self, mode: str) -> None:
         """Set the model's shaded or wireframe display mode."""

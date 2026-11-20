@@ -52,37 +52,48 @@ Open a file directly with `python -m sillycad part.sillycad`.
 
 Use **File** for document commands and the Quick Access Toolbar for common file commands and undo/redo. The **3D Model** ribbon has Start 2D Sketch, Extrude (Join or Cut), Revolve, and plane visibility; **View** has display, visibility, and navigation controls.
 
-Click **Start 2D Sketch**, then pick a visible base plane or flat face in the viewport, or a plane under **Origin** in the Model browser. Alternatively, select the plane or face first, then start the sketch. Its editor opens directly; a face outline appears as a snappable guide. To specify an offset, use **Sketch with Offset…** from the Start 2D Sketch dropdown or a browser plane's context menu. The Origin eye hides or shows the planes and axes.
+Click **Start 2D Sketch**, then pick a visible base plane or flat face in the viewport, or a plane under **Origin** in the Model browser. Alternatively, select the plane or face first, then start the sketch. The sketch opens in the main viewport with the part behind it; a face outline appears as a snappable guide. To specify an offset, use **Sketch with Offset…** from the Start 2D Sketch dropdown or a browser plane's context menu. The Origin eye hides or shows the planes and axes.
 
 Select a plane, flat face, or sketch and use **Look At** on the View ribbon, navigation bar, or viewport marking menu to face it directly. While a sketch plane is being requested, `Esc` or right-click cancels the command.
 
 Consumed sketches are nested under their features; other sketches remain at the top level. Double-click to edit, `F2` to rename, `Del` to delete, or right-click for more. Failed features are red with the reason in a tooltip; the last good body stays on screen. The document tab and window title show `*` for unsaved changes.
 
-**Sketch editor**
+**Sketch environment**
 
-After choosing a sketch plane, the separate 2D editor opens. Pick a tool to draw. To constrain, select items and then click a constraint button (or press its key). Every button's tooltip shows its key and what to select. Double-click a dimension to change it.
+The camera turns toward the sketch plane and the contextual **Sketch** ribbon appears. Use **Rectangle** and drag between opposite corners to make four connected, horizontal/vertical lines. Lines chain by clicking successive points; right-click ends the chain. Scroll or right-drag to zoom, middle-drag to pan, and Shift+middle-drag to orbit; `F5` looks back at the sketch plane.
+
+Select geometry, then click **Dimension** or press `D` to infer a suitable dimension and enter its value at the label. Double-click a dimension to edit it. Explicit dimensions remain in the Dimension dropdown. The constraint-button grid is hidden initially; click **Constraints** in the ribbon to show it. Click **Constraints** in the sketch-status panel to open the constraint list. Constraint glyphs can also be clicked and deleted; `F8` shows them and `F9` hides them. Right-click for the sketch marking menu when not drawing.
+
+Undo and redo work locally while sketching. **Finish Sketch** commits the complete edit as one main-window undo step; Cancel Sketch is in the marking menu. Colors: dark = still free, green = fully constrained, red = conflicting or redundant constraints. Red rings mark profile problems such as loose ends.
 
 | Draw | Key | Constrain | Key | Dimension | Key |
 |---|---|---|---|---|---|
-| Select / cancel | `Esc` | Coincident | `I` | Distance | `D` |
+| Select / cancel | `Esc` | Coincident | `I` | Smart Dimension | `D` |
 | Point | `P` | Horizontal | `H` | Horizontal distance | `Shift+H` |
 | Line | `L` | Vertical | `V` | Vertical distance | `Shift+V` |
 | Arc | `A` | Parallel | `Shift+P` | Angle | `Shift+A` |
 | Circle | `C` | Perpendicular | `N` | Radius | `R` |
 | Construction | `G` | Equal | `E` | Diameter | `Shift+D` |
 | Delete | `Del` | Point on line | `O` | | |
-| Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` | Tangent | `T` | | |
+| Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` or `Ctrl+Y` | Tangent | `T` | | |
 | Fit view | `Home` | Midpoint | `M` | | |
-| Finish | `Ctrl+Enter` | Fix | `F` | | |
+| Finish | `Ctrl+Enter` | Fix | `F` | Look at sketch | `F5` |
+| Show / hide glyphs | `F8` / `F9` | | | | |
 
-Colors: dark = still free, green = fully constrained, red = conflicting or redundant constraints. Red rings mark profile problems such as loose ends.
+Overlapping circles currently produce an intersecting-profile error. Choosing an individual overlapping region to extrude is deferred: it needs modeling and file-format changes.
 
 ## Test and lint
 
 ```bash
 pytest
 ruff check .
-ruff format .
+ruff format --check .
+```
+
+The native-window integration test is opt-in and needs an active X11/XWayland display:
+
+```bash
+SILLYCAD_NATIVE_GUI_TESTS=1 QT_QPA_PLATFORM=xcb pytest -q tests/test_sketch_native.py
 ```
 
 ## Files
@@ -93,6 +104,6 @@ Parts are saved as `.sillycad` files: readable JSON with a `format_version`, hol
 
 - `sillycad/core/` has the document, sketches, solver, features, file I/O and STL export. It has no Qt imports and is fully testable headless.
 - `sillycad/gui/` is the PySide6 interface built on top of the core.
-- `tests/` holds the headless pytest tests.
+- `tests/` holds the headless pytest tests and an opt-in native-window integration test.
 
 Progress is tracked in [progress.md](progress.md).

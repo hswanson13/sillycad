@@ -4,6 +4,7 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -114,6 +115,77 @@ class Ribbon(QWidget):
         self.tabs.setCurrentIndex(0)
         self.extrude_button.showMenu()
 
+    def show_sketch(self, actions: dict[str, QAction]) -> None:
+        """Create and select the contextual Sketch ribbon."""
+        controls = QWidget()
+        grid = QGridLayout(controls)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(0)
+        for i, kind in enumerate(
+            (
+                "coincident",
+                "horizontal",
+                "vertical",
+                "parallel",
+                "perpendicular",
+                "equal",
+                "point_on_line",
+                "tangent",
+                "midpoint",
+                "fix",
+            )
+        ):
+            button = _button(actions[kind], icon_only=True)
+            grid.addWidget(button, i // 5, i % 5)
+        controls.setVisible(False)
+        actions["constraint_controls"].setChecked(False)
+        actions["constraint_controls"].toggled.connect(controls.setVisible)
+
+        dimension = _button(actions["smart_dimension"], large=True)
+        menu = QMenu(dimension)
+        for kind in ("distance", "distance_x", "distance_y", "angle", "radius", "diameter"):
+            menu.addAction(actions[kind])
+        dimension.setMenu(menu)
+        dimension.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        page = _page(
+            [
+                (
+                    "Create",
+                    [
+                        _button(actions["line"], large=True),
+                        _button(actions["rectangle"], large=True),
+                        _column(actions["circle"], actions["arc"], actions["point"]),
+                        _button(actions["select"], large=True),
+                    ],
+                ),
+                (
+                    "Constrain",
+                    [
+                        dimension,
+                        _column(actions["constraint_controls"], actions["show_constraints"]),
+                        controls,
+                    ],
+                ),
+                ("Format", [_button(actions["construction"], large=True)]),
+                ("Exit", [_button(actions["finish"], large=True)]),
+            ],
+            last_right=True,
+        )
+        self.pages.addWidget(page)
+        self.tabs.addTab("Sketch")
+        self.tabs.setTabEnabled(0, False)
+        self.tabs.setCurrentIndex(self.tabs.count() - 1)
+
+    def hide_sketch(self) -> None:
+        """Remove the contextual ribbon and return to the part environment."""
+        index = self.tabs.count() - 1
+        self.tabs.setTabEnabled(0, True)
+        self.tabs.setCurrentIndex(0)
+        self.tabs.removeTab(index)
+        page = self.pages.widget(index)
+        self.pages.removeWidget(page)
+        page.deleteLater()
+
 
 def _button(action: QAction, *, large: bool = False, icon_only: bool = False) -> QToolButton:
     button = QToolButton()
@@ -143,13 +215,15 @@ def _column(*actions: QAction) -> QWidget:
     return widget
 
 
-def _page(panels: list[tuple[str, list[QWidget]]]) -> QWidget:
+def _page(panels: list[tuple[str, list[QWidget]]], *, last_right: bool = False) -> QWidget:
     page = QWidget()
     page.setObjectName("ribbonPage")
     layout = QHBoxLayout(page)
     layout.setContentsMargins(4, 3, 4, 2)
     layout.setSpacing(0)
-    for title, widgets in panels:
+    for index, (title, widgets) in enumerate(panels):
+        if last_right and index == len(panels) - 1:
+            layout.addStretch()
         panel = QWidget()
         panel.setObjectName("ribbonPanel")
         panel.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
@@ -172,5 +246,6 @@ def _page(panels: list[tuple[str, list[QWidget]]]) -> QWidget:
         separator.setObjectName("panelSeparator")
         separator.setFrameShape(QFrame.Shape.VLine)
         layout.addWidget(separator)
-    layout.addStretch()
+    if not last_right:
+        layout.addStretch()
     return page
