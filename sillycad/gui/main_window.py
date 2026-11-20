@@ -14,12 +14,21 @@ from pathlib import Path
 
 from OCC.Core.TopAbs import TopAbs_FACE
 from OCC.Core.TopoDS import TopoDS_Face, TopoDS_Shape, topods
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QCloseEvent, QFont, QKeySequence, QUndoStack
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QCloseEvent,
+    QFont,
+    QKeySequence,
+    QShortcut,
+    QUndoStack,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
     QFileDialog,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -40,13 +49,15 @@ from sillycad.core.features import (
     SolidFeature,
     plane_from_face,
 )
-from sillycad.core.geometry import Placement, outline_in_plane, volume
+from sillycad.core.geometry import BASE_PLANES, Placement, outline_in_plane, volume
 from sillycad.core.sketch import XY, Sketch
 from sillycad.gui import theme
 from sillycad.gui.browser import ModelBrowser
 from sillycad.gui.commands import SnapshotCommand, redo_shortcuts
 from sillycad.gui.dialogs import FeatureDialog, SketchPlaneDialog, StlDialog
 from sillycad.gui.icons import icon
+from sillycad.gui.marking_menu import MarkingMenu
+from sillycad.gui.navigation import NavigationBar
 from sillycad.gui.ribbon import Ribbon
 from sillycad.gui.sketch_editor import SketchEditor
 from sillycad.gui.viewer import Viewer
@@ -70,14 +81,21 @@ class MainWindow(QMainWindow):
         self.stl_settings = (STL_LINEAR_DEFLECTION, STL_ANGULAR_DEFLECTION)
         self.picked_face: TopoDS_Face | None = None  # clicked in the 3D view, to sketch on
         self.picked_plane: str | None = None
+        self._picking_plane = False
 
         self.viewer = Viewer(self)
         self.viewer.sig_topods_selected.connect(self._picked)
+        self.viewer.marking_menu_requested.connect(self._show_marking_menu)
+        self.viewer.plane_pick_cancelled.connect(self.cancel_plane_pick)
         center = QWidget()
         center_layout = QVBoxLayout(center)
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(0)
-        center_layout.addWidget(self.viewer, 1)
+        viewport_layout = QHBoxLayout()
+        viewport_layout.setContentsMargins(0, 0, 0, 0)
+        viewport_layout.setSpacing(0)
+        viewport_layout.addWidget(self.viewer, 1)
+        center_layout.addLayout(viewport_layout, 1)
         self.document_tabs = QTabBar()
         self.document_tabs.setObjectName("documentTabs")
         self.document_tabs.setExpanding(False)
@@ -91,7 +109,8 @@ class MainWindow(QMainWindow):
         self.tree.delete_requested.connect(self.delete_feature)
         self.tree.plane_requested.connect(self.change_plane)
         self.tree.plane_selected.connect(self._select_plane)
-        self.tree.start_sketch_requested.connect(self.new_sketch)
+        self.tree.start_sketch_requested.connect(self._start_sketch_on_plane)
+        self.tree.offset_sketch_requested.connect(self._start_offset_sketch_on_plane)
         self.tree.planes_visibility_requested.connect(self._toggle_planes)
         dock = QDockWidget("Model", self)
         dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
@@ -101,6 +120,10 @@ class MainWindow(QMainWindow):
         self.volume_status = QLabel()
         self.statusBar().addPermanentWidget(self.volume_status)
         self._build_actions()
+        self.navigation = NavigationBar(self.actions, self)
+        viewport_layout.addWidget(self.navigation)
+        self._cancel_shortcut = QShortcut(QKeySequence("Esc"), self)
+        self._cancel_shortcut.activated.connect(self.cancel_plane_pick)
         self._update_title()
 
     # ── Actions and ribbon ──────────────────────────────────────────
@@ -118,7 +141,12 @@ class MainWindow(QMainWindow):
             action.setShortcut(QKeySequence(key))
         shortcut = f"<br>Shortcut: {key}" if key else ""
         action.setToolTip(f"<b>{text}</b><br>{tip or text}.{shortcut}")
-        action.triggered.connect(lambda _checked=False: slot())
+
+        def invoke() -> None:
+            self.cancel_plane_pick()
+            slot()
+
+        action.triggered.connect(invoke)
         self.addAction(action)
         return action
 
@@ -136,6 +164,12 @@ class MainWindow(QMainWindow):
             "quit": self._action("Quit", self.close, "document", "Ctrl+Q", "Close SillyCAD"),
             "new_sketch": self._action(
                 "Start 2D Sketch", self.new_sketch, "sketch", "N", "Draw a sketch on a plane"
+            ),
+            "sketch_offset": self._action(
+                "Sketch with Offset…",
+                self.new_sketch_with_offset,
+                "sketch",
+                tip="Choose a sketch plane and offset",
             ),
             "extrude": self._action(
                 "Extrude",
@@ -188,6 +222,27 @@ class MainWindow(QMainWindow):
                 "0",
                 "Show an isometric view and fit the model",
             ),
+            "look_at": self._action(
+                "Look At", self.look_at, "look_at", tip="Look straight at the selected plane"
+            ),
+            "orbit": self._action(
+                "Orbit",
+                lambda: self.viewer.set_navigation_mode("orbit"),
+                "orbit",
+                tip="Orbit by dragging with the left mouse button",
+            ),
+            "pan": self._action(
+                "Pan",
+                lambda: self.viewer.set_navigation_mode("pan"),
+                "pan",
+                tip="Pan by dragging with the left mouse button",
+            ),
+            "zoom": self._action(
+                "Zoom",
+                lambda: self.viewer.set_navigation_mode("zoom"),
+                "zoom",
+                tip="Zoom by dragging with the left mouse button",
+            ),
             "shaded": self._action(
                 "Shaded",
                 lambda: self.viewer.set_mode("shaded"),
@@ -215,6 +270,11 @@ class MainWindow(QMainWindow):
         actions["iso"].setToolTip(
             "<b>Home</b><br>Show an isometric view and fit the model.<br>Shortcuts: 0, F6"
         )
+        self._navigation_group = QActionGroup(self)
+        for key in ("orbit", "pan", "zoom"):
+            actions[key].setCheckable(True)
+            self._navigation_group.addAction(actions[key])
+        actions["orbit"].setChecked(True)
         undo = self.undo_stack.createUndoAction(self, "Undo")
         undo.setShortcut(QKeySequence.StandardKey.Undo)
         undo.setIcon(icon("undo"))
@@ -223,6 +283,8 @@ class MainWindow(QMainWindow):
         redo.setShortcuts(redo_shortcuts())
         redo.setIcon(icon("redo"))
         redo.setToolTip("<b>Redo</b><br>Redo the last undone change.<br>Shortcut: Ctrl+Shift+Z")
+        undo.triggered.connect(self.cancel_plane_pick)
+        redo.triggered.connect(self.cancel_plane_pick)
         self.addAction(undo)
         self.addAction(redo)
         actions.update(undo=undo, redo=redo)
@@ -243,7 +305,49 @@ class MainWindow(QMainWindow):
         self.picked_plane = plane
         if plane is not None:
             self.picked_face = None
-            self.statusBar().showMessage(f"{plane} plane picked. Click Start 2D Sketch.")
+            if self._picking_plane:
+                self._start_sketch(plane, 0.0, None)
+            else:
+                self.statusBar().showMessage(f"{plane} plane picked. Click Start 2D Sketch.")
+
+    def _start_sketch_on_plane(self, plane: str) -> None:
+        waiting = self._picking_plane
+        self._select_plane(plane)
+        if not waiting:
+            self.new_sketch()
+
+    def _start_offset_sketch_on_plane(self, plane: str) -> None:
+        self.cancel_plane_pick()
+        self._select_plane(plane)
+        self.new_sketch_with_offset()
+
+    def _show_marking_menu(self, pos: QPoint) -> None:
+        MarkingMenu(self.actions, self).exec(pos)
+
+    def cancel_plane_pick(self) -> None:
+        """Cancel command-first sketch plane selection."""
+        if self._picking_plane:
+            self._picking_plane = False
+            self.viewer.set_plane_pick(False)
+            self.statusBar().showMessage("Ready")
+
+    def look_at(self) -> None:
+        """Look directly at the selected plane, flat face or sketch."""
+        selected = self._picked_plane()
+        if selected is not None:
+            name, offset, face = selected
+            placement = face if name == "Face" else BASE_PLANES[name]
+        else:
+            if self.picked_face is not None:
+                return
+            sketch = self.doc.find(self.tree.current_id() or "")
+            if not isinstance(sketch, SketchFeature):
+                self.statusBar().showMessage("Select a plane, planar face or sketch for Look At.")
+                return
+            placement, offset = sketch.placement(), sketch.offset
+        if placement is not None:
+            self.viewer.look_at(placement, offset)
+            self.statusBar().showMessage("Looking at the selected plane.")
 
     # ── Model ───────────────────────────────────────────────────────
 
@@ -287,13 +391,28 @@ class MainWindow(QMainWindow):
                     log.exception("Could not draw %s", sketch.name)
         self.viewer.show_model(model.shape, wires, self.show_planes.isChecked(), fit)
         self.picked_face = None  # redrawing clears the 3D selection
+        if self.tree.current_plane() != self.picked_plane:
+            self.picked_plane = None
 
     def _picked(self, shapes: list[TopoDS_Shape]) -> None:
+        plane = next(
+            (name for shape in shapes if (name := self.viewer.plane_name(shape)) is not None),
+            None,
+        )
+        if plane is not None:
+            self._select_plane(plane)
+            return
         faces = [topods.Face(s) for s in shapes if s.ShapeType() == TopAbs_FACE]
         self.picked_face = faces[0] if faces else None
         self.picked_plane = None
         if self.picked_face is not None:
-            self.statusBar().showMessage("Face picked. Click Start 2D Sketch (N).")
+            selection = self._picked_plane()
+            if selection is not None and self._picking_plane:
+                self._start_sketch(*selection)
+            elif selection is not None:
+                self.statusBar().showMessage("Face picked. Click Start 2D Sketch (N).")
+        elif self._picking_plane:
+            self.statusBar().showMessage("Select a plane or planar face (Esc to cancel).")
 
     def _picked_plane(self) -> tuple[str, float, Placement | None] | None:
         """Return the selected base plane or the plane of a picked flat face."""
@@ -336,12 +455,28 @@ class MainWindow(QMainWindow):
     # ── Feature commands ────────────────────────────────────────────
 
     def new_sketch(self) -> None:
-        """Ask for a plane (the picked face is offered first), then open the sketch editor."""
+        """Start immediately on the selected plane, or ask the user to pick one."""
+        selection = self._picked_plane()
+        if selection is not None:
+            self._start_sketch(*selection)
+            return
+        self.actions["orbit"].trigger()
+        self._picking_plane = True
+        self.viewer.set_plane_pick(True)
+        self.statusBar().showMessage("Select a plane or planar face (Esc to cancel).")
+
+    def new_sketch_with_offset(self) -> None:
+        """Open the explicit plane and offset chooser."""
+        self.cancel_plane_pick()
         plane, offset, face = self._picked_plane() or ("XY", 0.0, None)
         dialog = SketchPlaneDialog(self, plane, offset, has_face=face is not None)
         if not dialog.exec():
             return
         plane, offset = dialog.values()
+        self._start_sketch(plane, offset, face)
+
+    def _start_sketch(self, plane: str, offset: float, face: Placement | None) -> None:
+        self.cancel_plane_pick()
         feature = SketchFeature(
             self.doc.new_id(), self.doc.new_name("Sketch"), plane, offset,
             face=face if plane == "Face" else None,
@@ -449,6 +584,7 @@ class MainWindow(QMainWindow):
         self.tree.set_document_name(f"{name}{unsaved}")
 
     def _set_document(self, doc: Document, path: Path | None) -> None:
+        self.cancel_plane_pick()
         self.doc, self.path = doc, path
         self.picked_face = None
         self.picked_plane = None

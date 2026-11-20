@@ -2,9 +2,9 @@
 
 # SillyCAD Progress
 
-**Where we are:** 🎉 M1–M5, sketching on faces, and U1 (shell and theme) are done. 58 tests pass.
+**Where we are:** 🎉 M1–M5, sketching on faces, U1 (shell and theme), and U2 (viewport) are done. 66 tests pass.
 
-**Needs you:** try U1 below and confirm before U2 (viewport).
+**Needs you:** try U2 below and confirm before U3 (sketch environment).
 
 Legend: ✅ done · 🔨 in progress · ⬜ not started
 
@@ -95,26 +95,40 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 - [x] `E` for Extrude, `F6` for Home view and `Home` for Zoom All; both documented redo shortcuts work in the main window and sketch editor
 - [x] Tests for browser nesting, Origin, action shortcuts, save state and sketch redo (58 tests total)
 
-**Still to come:** viewport colors and navigation (U2), sketching in the main window (U3), and feature Property Panels (U4). The viewport and sketch editor retain their previous appearance and workflows for now.
+## ✅ U2: Inventor-style viewport
+
+**You'll be able to:** pick a plane or face after starting the sketch command, navigate with the ViewCube, and find common commands in the viewport.
+
+- [x] Light gradient, neutral part with dark edges, translucent work planes, axes, and blue hover / selection
+- [x] Native ViewCube, right-edge Pan / Zoom / Orbit / Zoom All / Look At controls, and Home view
+- [x] Start 2D Sketch accepts a plane or flat face first or after the command; `Esc` / right-click cancels a pending pick
+- [x] **Sketch with Offset…** keeps the explicit plane / offset dialog available; face outlines still appear as snappable guides
+- [x] Look At faces a selected browser plane or sketch, or a selected planar face
+- [x] Viewport marking menu provides sketch and solid commands, navigation, undo and visibility; right-drag still zooms
+- [x] Separate sketch editor, feature dialogs, live preview, save / export and undo / redo remain in place
+- [x] Tests cover plane selection, offsets, Look At, command cancellation and ordinary face-owner handling (66 tests total)
+
+**Still to come:** sketching in the main window (U3) and feature Property Panels (U4). U3 begins with a measured native-viewport sketching spike and a report before the full sketch environment is built. It will also add a click-and-drag rectangle made of ordinary lines with horizontal / vertical constraints, and keep the separate constraint / dimension toolbar normally hidden with an easy way to reopen its controls.
 
 ---
 
 ## How to try it
 
-### U1
+### U2
 
 ```bash
 conda activate sillycad
 python -m sillycad
 ```
 
-1. Try **File** and the Quick Access buttons. The **3D Model** and **View** tabs have the existing modeling and view commands.
-2. Expand **Origin** in the Model browser, click **XZ Plane**, then click **Start 2D Sketch** (`N`). The existing plane dialog should start on XZ; try its offset field.
-3. Draw a closed rectangle in the separate sketch editor and click **✔ Finish**. Open **Extrude** (`E`) and choose **Join (Pad)**; change the length and check the live preview, then click OK.
-4. The browser should show **Extrusion1** with **Sketch1** nested underneath. Double-click either to edit it; try `F2`, `Del` (and the dependent warning), and undo.
-5. Click the Origin eye to hide and show planes and axes. On **View**, try Shaded/Wireframe, sketch visibility, Zoom All and the standard views.
-6. Save the part, make an edit, and check the `*` in both the title and document tab. Undo and redo with `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`); save and reopen the part. Export STL and check the triangle-count message.
-7. Run `ruff check .`, `ruff format --check .` and `pytest`; all 58 tests should pass.
+1. Click **Start 2D Sketch** (`N`), then select a highlighted base plane in the viewport or a plane under **Origin**. Alternatively, select a plane first and start the command. The separate sketch editor should open immediately, without a plane dialog. Try `Esc` and right-click to cancel while waiting for a plane.
+2. Draw a closed rectangle with the Line tool, finish the sketch, and use **Extrude** (`E`) → **Join (Pad)**. Change the length and check the live preview, then click OK. The browser should show **Extrusion1** with **Sketch1** nested underneath.
+3. Click **Start 2D Sketch** and then a flat face of the solid. Its outline should appear as a snappable guide in the sketch editor. Cancel that sketch; try selecting the face before starting a sketch as well.
+4. Open the **Start 2D Sketch** dropdown → **Sketch with Offset…**, choose a base plane and enter an offset. Alternatively, right-click a browser plane and choose **Sketch with Offset…**.
+5. Click different ViewCube faces and corners; use `F6` to return to the isometric Home view. Try each navigation-bar mode, middle-drag pan, right-drag zoom, the wheel, and `Home` for Zoom All. Select a plane, planar face, or browser sketch and choose **Look At**.
+6. Right-click the viewport to try the marking menu. Hide and show Origin, switch Shaded / Wireframe, and check that the ViewCube still works after the model changes.
+7. Save the part, make an edit, and check the `*` in the title and document tab. Undo / redo, reopen the part, and export STL; the status bar reports its triangle count.
+8. Run `ruff check .`, `ruff format --check .` and `pytest`; all 66 tests should pass.
 
 **Main-window keys**
 
@@ -126,8 +140,9 @@ python -m sillycad
 | Join (Pad) / Cut (Pocket) | `P` / `O` | Revolve | `R` |
 | Zoom All | `F` / `Home` | Home view | `0` / `F6` |
 | Front / Top / Right | `1` / `2` / `3` | Shaded / Wireframe | `S` / `W` |
+| Cancel plane selection | `Esc` / right-click | Marking menu | right-click viewport |
 
-The sketch editor keys are unchanged; see the table under M3. The M1–M5 walkthroughs below describe the historical UI and are superseded by U1 where they differ.
+The sketch editor keys are unchanged; see the table in the README. The M1–M5 walkthroughs below describe the historical UI and are superseded by U2 where they differ.
 
 ### M1
 

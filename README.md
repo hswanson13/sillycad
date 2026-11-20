@@ -27,11 +27,14 @@ python -m sillycad
 
 | Action | Mouse / key |
 |---|---|
-| Orbit | Left-drag |
-| Pan | Middle-drag |
-| Zoom | Wheel or right-drag |
+| Orbit | Left-drag, or choose Orbit on the navigation bar |
+| Pan | Middle-drag, or choose Pan and left-drag |
+| Zoom | Wheel / right-drag, or choose Zoom and left-drag |
 | Fit all | `F` / `Home` |
+| Home view (isometric + fit) | `0` / `F6` |
 | Wireframe / shaded | `W` / `S` |
+
+Click the ViewCube for standard orientations. Right-click the viewport for the marking menu; press `Esc` or click outside it to dismiss it.
 
 Open a file directly with `python -m sillycad part.sillycad`.
 
@@ -49,13 +52,15 @@ Open a file directly with `python -m sillycad part.sillycad`.
 
 Use **File** for document commands and the Quick Access Toolbar for common file commands and undo/redo. The **3D Model** ribbon has Start 2D Sketch, Extrude (Join or Cut), Revolve, and plane visibility; **View** has display, visibility, and navigation controls.
 
-In the Model browser, expand **Origin** and click a plane before starting a sketch to preselect it in the plane dialog. To sketch on a part, click a flat face first; its outline shows in the sketch editor as a guide. The Origin eye hides or shows the planes and axes.
+Click **Start 2D Sketch**, then pick a visible base plane or flat face in the viewport, or a plane under **Origin** in the Model browser. Alternatively, select the plane or face first, then start the sketch. Its editor opens directly; a face outline appears as a snappable guide. To specify an offset, use **Sketch with Offset…** from the Start 2D Sketch dropdown or a browser plane's context menu. The Origin eye hides or shows the planes and axes.
+
+Select a plane, flat face, or sketch and use **Look At** on the View ribbon, navigation bar, or viewport marking menu to face it directly. While a sketch plane is being requested, `Esc` or right-click cancels the command.
 
 Consumed sketches are nested under their features; other sketches remain at the top level. Double-click to edit, `F2` to rename, `Del` to delete, or right-click for more. Failed features are red with the reason in a tooltip; the last good body stays on screen. The document tab and window title show `*` for unsaved changes.
 
 **Sketch editor**
 
-Click **Start 2D Sketch**, pick a plane, and the separate 2D editor opens. Pick a tool to draw. To constrain, select items and then click a constraint button (or press its key). Every button's tooltip shows its key and what to select. Double-click a dimension to change it.
+After choosing a sketch plane, the separate 2D editor opens. Pick a tool to draw. To constrain, select items and then click a constraint button (or press its key). Every button's tooltip shows its key and what to select. Double-click a dimension to change it.
 
 | Draw | Key | Constrain | Key | Dimension | Key |
 |---|---|---|---|---|---|

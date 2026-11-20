@@ -24,11 +24,21 @@ SKETCH_HOVER = "#2f80ed"
 SKETCH_REFERENCE = "#9aa3b2"
 SKETCH_DIMENSION_BACKGROUND = "#e6ffffff"
 
-VIEW_SKETCH = (0.1, 0.3, 1.0)
+VIEW_BACKGROUND_TOP = (1.0, 1.0, 1.0)
+VIEW_BACKGROUND_BOTTOM = (0.776, 0.812, 0.855)
+VIEW_BODY = (0.88, 0.89, 0.91)
+VIEW_EDGE = (0.25, 0.27, 0.29)
+VIEW_HOVER = (0.53, 0.79, 0.94)
+VIEW_SELECTED = (0.024, 0.588, 0.843)
+VIEW_CUBE = (0.88, 0.90, 0.92)
+VIEW_SKETCH = (0.05, 0.40, 0.70)
+VIEW_AXIS_X = (0.75, 0.28, 0.28)
+VIEW_AXIS_Y = (0.29, 0.62, 0.34)
+VIEW_AXIS_Z = (0.26, 0.44, 0.73)
 VIEW_PLANES = {
-    "XY": (0.25, 0.45, 0.95),
-    "XZ": (0.25, 0.7, 0.3),
-    "YZ": (0.9, 0.3, 0.3),
+    "XY": (0.39, 0.62, 0.81),
+    "XZ": (0.48, 0.70, 0.55),
+    "YZ": (0.77, 0.52, 0.52),
 }
 
 STYLESHEET = f"""
@@ -42,6 +52,13 @@ QWidget#ribbon, QWidget#ribbonPage, QWidget#ribbonPanel {{
 QWidget#quickAccess {{
     background: {PANEL_LABEL};
     border-bottom: 1px solid {BORDER};
+}}
+QWidget#navigationBar {{
+    background: {RIBBON};
+    border-left: 1px solid {BORDER};
+}}
+QWidget#markingControls {{
+    background: {WHITE};
 }}
 QLabel#applicationName {{
     color: {MUTED};

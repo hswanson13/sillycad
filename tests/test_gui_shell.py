@@ -3,18 +3,29 @@
 import os
 from collections.abc import Iterator
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QAction, QKeyEvent, QKeySequence
+from OCC.Core.BRepAdaptor import BRepAdaptor_Surface
+from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+from OCC.Core.GeomAbs import GeomAbs_Cylinder
+from OCC.Core.StdSelect import StdSelect_BRepOwner
+from OCC.Core.TopAbs import TopAbs_FACE
+from OCC.Core.TopExp import TopExp_Explorer
+from OCC.Core.TopoDS import topods
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, Signal
+from PySide6.QtGui import QAction, QKeyEvent, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import QApplication, QToolButton, QWidget
 
 from sillycad.core.document import Document
 from sillycad.core.features import Pad, Pocket, SketchFeature
+from sillycad.core.geometry import BASE_PLANES, Placement
 from sillycad.core.sketch import Sketch
 from sillycad.gui.browser import ModelBrowser
 from sillycad.gui.main_window import MainWindow
+from sillycad.gui.marking_menu import MarkingMenu
 from sillycad.gui.sketch_editor import SketchEditor
+from sillycad.gui.viewer import Viewer
 
 
 @pytest.fixture(scope="session")
@@ -27,12 +38,17 @@ class FakeViewer(QWidget):
     """Keep shell tests independent of an OpenGL window."""
 
     sig_topods_selected = Signal(list)
+    marking_menu_requested = Signal(QPoint)
+    plane_pick_cancelled = Signal()
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
         self.planes = True
         self.mode = ""
         self.view = ""
+        self.navigation_mode = "orbit"
+        self.picking_plane = False
+        self.looked_at: tuple[Placement, float] | None = None
 
     def show_model(self, solid: object, sketches: list[object], planes: bool, fit: bool) -> None:
         self.planes = planes
@@ -42,6 +58,18 @@ class FakeViewer(QWidget):
 
     def set_mode(self, mode: str) -> None:
         self.mode = mode
+
+    def set_navigation_mode(self, mode: str) -> None:
+        self.navigation_mode = mode
+
+    def set_plane_pick(self, active: bool) -> None:
+        self.picking_plane = active
+
+    def plane_name(self, shape: object) -> str | None:
+        return None
+
+    def look_at(self, placement: Placement, offset: float = 0.0) -> None:
+        self.looked_at = placement, offset
 
 
 @pytest.fixture
@@ -118,6 +146,7 @@ def test_origin_plane_selection_and_visibility(window: MainWindow) -> None:
     assert window.show_planes.isChecked()
     assert viewer.planes
     assert "Hide Origin" in window.tree._origin_eye.toolTip()
+    assert window._picked_plane() == ("XZ", 0.0, None)
     window._set_document(Document(), None)
     assert window._picked_plane() is None
     assert window.tree.currentItem() is None
@@ -193,3 +222,181 @@ def test_sketch_editor_retains_both_redo_shortcuts(app: QApplication) -> None:
     assert len(editor.sketch.geo) == 1
     editor.undo_stack.clear()
     editor.close()
+
+
+def test_command_first_sketch_plane_and_cancel(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    viewer = window.viewer
+    assert isinstance(viewer, FakeViewer)
+    started: list[tuple[str, float, Placement | None]] = []
+
+    def start(plane: str, offset: float, face: Placement | None) -> None:
+        started.append((plane, offset, face))
+        window.cancel_plane_pick()
+
+    monkeypatch.setattr(window, "_start_sketch", start)
+    window.actions["pan"].trigger()
+    assert viewer.navigation_mode == "pan"
+    window.new_sketch()
+    assert viewer.picking_plane
+    assert viewer.navigation_mode == "orbit"
+    assert "Select a plane or planar face" in window.statusBar().currentMessage()
+    window.viewer.plane_pick_cancelled.emit()
+    assert not viewer.picking_plane
+    assert started == []
+
+    window.new_sketch()
+    window.actions["pan"].trigger()
+    assert not viewer.picking_plane
+    assert viewer.navigation_mode == "pan"
+
+    window.new_sketch()
+    origin = window.tree.topLevelItem(0).child(0)
+    plane = origin.child(1)
+    window.tree.itemClicked.emit(plane, 0)
+    assert started == [("XZ", 0.0, None)]
+    assert not viewer.picking_plane
+
+
+def test_pick_first_and_look_at_selected_sketch(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    viewer = window.viewer
+    assert isinstance(viewer, FakeViewer)
+    started: list[tuple[str, float, Placement | None]] = []
+
+    def start(plane: str, offset: float, face: Placement | None) -> None:
+        started.append((plane, offset, face))
+
+    monkeypatch.setattr(window, "_start_sketch", start)
+    window._select_plane("YZ")
+    window.new_sketch()
+    assert started == [("YZ", 0.0, None)]
+    window.look_at()
+    assert viewer.looked_at == (BASE_PLANES["YZ"], 0.0)
+
+    sketch = SketchFeature("s1", "Sketch1", "XZ", 7.0)
+    window._set_document(Document([sketch]), None)
+    window.tree.select(sketch.id)
+    window.look_at()
+    assert viewer.looked_at == (BASE_PLANES["XZ"], 7.0)
+
+
+def test_curved_face_is_rejected_while_waiting_for_a_plane(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    explorer = TopExp_Explorer(BRepPrimAPI_MakeCylinder(5, 10).Shape(), TopAbs_FACE)
+    while explorer.More():
+        face = topods.Face(explorer.Current())
+        if BRepAdaptor_Surface(face).GetType() == GeomAbs_Cylinder:
+            break
+        explorer.Next()
+    else:
+        pytest.fail("The cylinder did not contain a curved face")
+    started = []
+    monkeypatch.setattr(window, "_start_sketch", lambda *args: started.append(args))
+    window.new_sketch()
+    window._picked([face])
+    assert not started
+    assert window._picking_plane
+    assert "isn't flat" in window.statusBar().currentMessage()
+    window.cancel_plane_pick()
+
+
+def test_offset_sketch_uses_explicit_dialog(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started: list[tuple[str, float, Placement | None]] = []
+
+    class PlaneDialog:
+        def __init__(
+            self, parent: QWidget, plane: str, offset: float, has_face: bool = False
+        ) -> None:
+            assert (plane, offset, has_face) == ("XZ", 0.0, False)
+
+        def exec(self) -> bool:
+            return True
+
+        def values(self) -> tuple[str, float]:
+            return "XZ", 12.5
+
+    def start(plane: str, offset: float, face: Placement | None) -> None:
+        started.append((plane, offset, face))
+
+    monkeypatch.setattr("sillycad.gui.main_window.SketchPlaneDialog", PlaneDialog)
+    monkeypatch.setattr(window, "_start_sketch", start)
+    window._select_plane("XZ")
+    window.new_sketch_with_offset()
+    assert started == [("XZ", 12.5, None)]
+
+
+def test_marking_menu_actions_use_the_shared_commands(window: MainWindow) -> None:
+    menu = MarkingMenu(window.actions, window)
+    buttons = {button.text(): button for button in menu.findChildren(QToolButton)}
+    assert set(buttons) == {
+        "Start 2D Sketch",
+        "Extrude",
+        "Revolve",
+        "Zoom All",
+        "Home",
+        "Look At",
+        "Undo",
+        "Planes and Origin",
+    }
+    buttons["Planes and Origin"].click()
+    assert not window.show_planes.isChecked()
+    assert not window.viewer.planes
+    menu.close()
+
+
+def test_viewport_plane_pick_is_cleared_after_redraw(window: MainWindow) -> None:
+    window._select_plane("XY")
+    assert window._picked_plane() == ("XY", 0.0, None)
+    window.update_view()
+    assert window._picked_plane() is None
+
+
+def test_face_owner_is_not_downcast_to_a_view_cube(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    viewer = Viewer()
+    display = Mock()
+    display.Context.HasDetected.return_value = True
+    display.Context.DetectedOwner.return_value = StdSelect_BRepOwner(1)
+    display.selected_shapes = []
+    monkeypatch.setattr(viewer, "_display", display)
+    viewer._press_at = QPointF(20, 30)
+    selected = []
+    viewer.sig_topods_selected.connect(selected.append)
+    event = QMouseEvent(
+        QEvent.Type.MouseButtonRelease,
+        QPointF(20, 30),
+        QPointF(20, 30),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    viewer.mouseReleaseEvent(event)
+    display.Select.assert_called_once_with(20, 30)
+    assert selected == [[]]
+
+
+def test_right_click_cancels_plane_pick_without_opening_marking_menu(app: QApplication) -> None:
+    viewer = Viewer()
+    cancelled, menus = [], []
+    viewer.plane_pick_cancelled.connect(lambda: cancelled.append(True))
+    viewer.marking_menu_requested.connect(menus.append)
+    viewer.set_plane_pick(True)
+    viewer._press_at = QPointF(20, 30)
+    event = QMouseEvent(
+        QEvent.Type.MouseButtonRelease,
+        QPointF(20, 30),
+        QPointF(20, 30),
+        Qt.MouseButton.RightButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    viewer.mouseReleaseEvent(event)
+    assert cancelled == [True]
+    assert not menus

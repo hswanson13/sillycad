@@ -69,6 +69,11 @@ class Ribbon(QWidget):
         layout.addLayout(tabs_row)
 
         self.pages = QStackedWidget()
+        sketch_button = _button(actions["new_sketch"], large=True)
+        sketch_menu = QMenu(sketch_button)
+        sketch_menu.addAction(actions["sketch_offset"])
+        sketch_button.setMenu(sketch_menu)
+        sketch_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self.extrude_button = _button(actions["extrude"], large=True)
         extrude_menu = QMenu(self.extrude_button)
         extrude_menu.addActions([actions["pad"], actions["pocket"]])
@@ -77,7 +82,7 @@ class Ribbon(QWidget):
         self.pages.addWidget(
             _page(
                 [
-                    ("Sketch", [_button(actions["new_sketch"], large=True)]),
+                    ("Sketch", [sketch_button]),
                     ("Create", [self.extrude_button, _button(actions["revolve"], large=True)]),
                     ("Work Features", [_button(actions["planes"], large=True)]),
                 ]
@@ -94,6 +99,8 @@ class Ribbon(QWidget):
                             _button(actions["fit"], large=True),
                             _column(actions["front"], actions["top"]),
                             _column(actions["right"], actions["iso"]),
+                            _column(actions["orbit"], actions["pan"], actions["zoom"]),
+                            _button(actions["look_at"], large=True),
                         ],
                     ),
                 ]

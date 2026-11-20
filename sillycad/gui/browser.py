@@ -30,7 +30,8 @@ class ModelBrowser(QTreeWidget):
     delete_requested = Signal(str)
     plane_requested = Signal(str)
     plane_selected = Signal(object)
-    start_sketch_requested = Signal()
+    start_sketch_requested = Signal(str)
+    offset_sketch_requested = Signal(str)
     planes_visibility_requested = Signal()
 
     def __init__(self) -> None:
@@ -186,6 +187,11 @@ class ModelBrowser(QTreeWidget):
             return _id(item)
         return None
 
+    def current_plane(self) -> str | None:
+        """Return the selected base-plane name, if any."""
+        item = self.currentItem()
+        return _id(item) if item and item.data(0, _KIND) == "plane" else None
+
     def keyPressEvent(self, event: QKeyEvent) -> None:
         fid = self.current_id()
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and fid:
@@ -219,10 +225,12 @@ class ModelBrowser(QTreeWidget):
         elif kind == "plane":
 
             def start_sketch() -> None:
-                self.plane_selected.emit(_id(item))
-                self.start_sketch_requested.emit()
+                self.start_sketch_requested.emit(_id(item))
 
             menu.addAction("Start 2D Sketch", start_sketch)
+            menu.addAction(
+                "Start Sketch with Offset…", lambda: self.offset_sketch_requested.emit(_id(item))
+            )
         elif kind in ("feature", "sketch"):
             fid = _id(item)
             menu.addAction(
