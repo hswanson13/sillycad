@@ -44,7 +44,7 @@ class SketchPlaneDialog(QDialog):
         form.addRow("Plane:", self.plane)
         form.addRow("Offset:", self.offset)
         hint = QLabel("Tip: click a flat face in the 3D view first to sketch on it.")
-        hint.setStyleSheet("color: gray;")
+        hint.setObjectName("hintLabel")
         form.addRow(hint)
         form.addRow(_buttons(self))
 
@@ -102,7 +102,7 @@ class FeatureDialog(QDialog):
 
         self.message = QLabel()
         self.message.setWordWrap(True)
-        self.message.setStyleSheet("color: #d62828;")
+        self.message.setObjectName("errorLabel")
         form.addRow(self.message)
         form.addRow(_buttons(self))
         self._changed()
@@ -182,7 +182,7 @@ class StlDialog(QDialog):
         form.addRow("Angular deflection:", self.angular)
         hint = QLabel("Smaller = smoother curves and a bigger file. The defaults suit 3D printing.")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: gray;")
+        hint.setObjectName("hintLabel")
         form.addRow(hint)
         form.addRow(_buttons(self))
 

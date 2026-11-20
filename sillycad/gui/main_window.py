@@ -16,7 +16,17 @@ from OCC.Core.TopAbs import TopAbs_FACE
 from OCC.Core.TopoDS import TopoDS_Face, TopoDS_Shape, topods
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QCloseEvent, QFont, QKeySequence, QUndoStack
-from PySide6.QtWidgets import QApplication, QDockWidget, QFileDialog, QMainWindow, QMessageBox
+from PySide6.QtWidgets import (
+    QApplication,
+    QDockWidget,
+    QFileDialog,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QTabBar,
+    QVBoxLayout,
+    QWidget,
+)
 
 from sillycad.core import fileio
 from sillycad.core.constants import STL_ANGULAR_DEFLECTION, STL_LINEAR_DEFLECTION
@@ -32,9 +42,12 @@ from sillycad.core.features import (
 )
 from sillycad.core.geometry import Placement, outline_in_plane, volume
 from sillycad.core.sketch import XY, Sketch
-from sillycad.gui.commands import SnapshotCommand
+from sillycad.gui import theme
+from sillycad.gui.browser import ModelBrowser
+from sillycad.gui.commands import SnapshotCommand, redo_shortcuts
 from sillycad.gui.dialogs import FeatureDialog, SketchPlaneDialog, StlDialog
-from sillycad.gui.feature_tree import FeatureTree
+from sillycad.gui.icons import icon
+from sillycad.gui.ribbon import Ribbon
 from sillycad.gui.sketch_editor import SketchEditor
 from sillycad.gui.viewer import Viewer
 
@@ -56,94 +69,181 @@ class MainWindow(QMainWindow):
         self.path: Path | None = None  # where the document is saved
         self.stl_settings = (STL_LINEAR_DEFLECTION, STL_ANGULAR_DEFLECTION)
         self.picked_face: TopoDS_Face | None = None  # clicked in the 3D view, to sketch on
+        self.picked_plane: str | None = None
 
         self.viewer = Viewer(self)
         self.viewer.sig_topods_selected.connect(self._picked)
-        self.setCentralWidget(self.viewer)
-        self.tree = FeatureTree()
+        center = QWidget()
+        center_layout = QVBoxLayout(center)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(0)
+        center_layout.addWidget(self.viewer, 1)
+        self.document_tabs = QTabBar()
+        self.document_tabs.setObjectName("documentTabs")
+        self.document_tabs.setExpanding(False)
+        self.document_tabs.addTab("Untitled")
+        center_layout.addWidget(self.document_tabs)
+        self.setCentralWidget(center)
+
+        self.tree = ModelBrowser()
         self.tree.edit_requested.connect(self.edit_feature)
         self.tree.rename_requested.connect(self.rename_feature)
         self.tree.delete_requested.connect(self.delete_feature)
         self.tree.plane_requested.connect(self.change_plane)
-        dock = QDockWidget("Features", self)
+        self.tree.plane_selected.connect(self._select_plane)
+        self.tree.start_sketch_requested.connect(self.new_sketch)
+        self.tree.planes_visibility_requested.connect(self._toggle_planes)
+        dock = QDockWidget("Model", self)
         dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
         dock.setWidget(self.tree)
         dock.setMinimumWidth(260)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        self.volume_status = QLabel()
+        self.statusBar().addPermanentWidget(self.volume_status)
         self._build_actions()
         self._update_title()
 
-    # ── Menus and toolbar ───────────────────────────────────────────
+    # ── Actions and ribbon ──────────────────────────────────────────
 
     def _action(
-        self, text: str, slot: Callable[[], object], key: str = "", tip: str = ""
+        self,
+        text: str,
+        slot: Callable[[], object],
+        icon_name: str,
+        key: str = "",
+        tip: str = "",
     ) -> QAction:
-        action = QAction(text, self)
+        action = QAction(icon(icon_name), text, self)
         if key:
             action.setShortcut(QKeySequence(key))
-        action.setToolTip(f"{tip or text} ({key})" if key else tip or text)
+        shortcut = f"<br>Shortcut: {key}" if key else ""
+        action.setToolTip(f"<b>{text}</b><br>{tip or text}.{shortcut}")
         action.triggered.connect(lambda _checked=False: slot())
+        self.addAction(action)
         return action
 
     def _build_actions(self) -> None:
-        new_sketch = self._action(
-            "New Sketch", self.new_sketch, "N", "Draw a 2D sketch on a base plane"
-        )
-        pad = self._action("Pad", lambda: self.add_solid(Pad), "P", "Extrude a sketch into a solid")
-        pocket = self._action(
-            "Pocket", lambda: self.add_solid(Pocket), "O", "Cut a sketch out of the body"
-        )
-        revolve = self._action(
-            "Revolve", lambda: self.add_solid(Revolve), "R", "Spin a sketch around an axis"
+        actions = {
+            "new": self._action("New", self.new_document, "new", "Ctrl+N", "Start a new part"),
+            "open": self._action("Open…", self.open_document, "open", "Ctrl+O", "Open a part"),
+            "save": self._action("Save", self.save, "save", "Ctrl+S", "Save the part"),
+            "save_as": self._action(
+                "Save As…", self.save_as, "save", "Ctrl+Shift+S", "Save under a new name"
+            ),
+            "export": self._action(
+                "Export STL…", self.export_stl, "export", "Ctrl+E", "Export the body as STL"
+            ),
+            "quit": self._action("Quit", self.close, "document", "Ctrl+Q", "Close SillyCAD"),
+            "new_sketch": self._action(
+                "Start 2D Sketch", self.new_sketch, "sketch", "N", "Draw a sketch on a plane"
+            ),
+            "extrude": self._action(
+                "Extrude",
+                lambda: self.ribbon.show_extrude_menu(),
+                "pad",
+                "E",
+                "Choose whether to join or cut",
+            ),
+            "pad": self._action(
+                "Join (Pad)…", lambda: self.add_solid(Pad), "pad", "P", "Add a sketch to the body"
+            ),
+            "pocket": self._action(
+                "Cut (Pocket)…",
+                lambda: self.add_solid(Pocket),
+                "pocket",
+                "O",
+                "Cut a sketch out of the body",
+            ),
+            "revolve": self._action(
+                "Revolve",
+                lambda: self.add_solid(Revolve),
+                "revolve",
+                "R",
+                "Spin a sketch around an axis",
+            ),
+            "fit": self._action(
+                "Zoom All", lambda: self.viewer.set_view("fit"), "fit", "F", "Fit the model"
+            ),
+            "front": self._action(
+                "Front",
+                lambda: self.viewer.set_view("front"),
+                "front",
+                "1",
+                "View the model from the front",
+            ),
+            "top": self._action(
+                "Top", lambda: self.viewer.set_view("top"), "top", "2", "View the model from above"
+            ),
+            "right": self._action(
+                "Right",
+                lambda: self.viewer.set_view("right"),
+                "right",
+                "3",
+                "View the model from the right",
+            ),
+            "iso": self._action(
+                "Home",
+                lambda: self.viewer.set_view("iso"),
+                "iso",
+                "0",
+                "Show an isometric view and fit the model",
+            ),
+            "shaded": self._action(
+                "Shaded",
+                lambda: self.viewer.set_mode("shaded"),
+                "shaded",
+                "S",
+                "Display shaded surfaces",
+            ),
+            "wireframe": self._action(
+                "Wireframe",
+                lambda: self.viewer.set_mode("wireframe"),
+                "wireframe",
+                "W",
+                "Display the model as edges",
+            ),
+            "sketches": self._action(
+                "Sketches", self.update_view, "sketches", tip="Show or hide sketch wires"
+            ),
+            "planes": self._action(
+                "Planes and Origin", self.update_view, "planes", tip="Show or hide work features"
+            ),
+        }
+        actions["fit"].setShortcuts([QKeySequence("F"), QKeySequence("Home")])
+        actions["iso"].setShortcuts([QKeySequence("0"), QKeySequence("F6")])
+        actions["fit"].setToolTip("<b>Zoom All</b><br>Fit the model.<br>Shortcuts: F, Home")
+        actions["iso"].setToolTip(
+            "<b>Home</b><br>Show an isometric view and fit the model.<br>Shortcuts: 0, F6"
         )
         undo = self.undo_stack.createUndoAction(self, "Undo")
         undo.setShortcut(QKeySequence.StandardKey.Undo)
+        undo.setIcon(icon("undo"))
+        undo.setToolTip("<b>Undo</b><br>Undo the last change.<br>Shortcut: Ctrl+Z")
         redo = self.undo_stack.createRedoAction(self, "Redo")
-        redo.setShortcuts([QKeySequence(QKeySequence.StandardKey.Redo), QKeySequence("Ctrl+Y")])
-        views = [
-            self._action("Fit All", lambda: self.viewer.set_view("fit"), "F"),
-            self._action("Front", lambda: self.viewer.set_view("front"), "1"),
-            self._action("Top", lambda: self.viewer.set_view("top"), "2"),
-            self._action("Right", lambda: self.viewer.set_view("right"), "3"),
-            self._action("Iso", lambda: self.viewer.set_view("iso"), "0"),
-        ]
-        self.show_sketches = self._action(
-            "Show Sketches", self.update_view, tip="Show sketch wires"
-        )
-        self.show_planes = self._action("Show Planes", self.update_view, tip="Show base planes")
+        redo.setShortcuts(redo_shortcuts())
+        redo.setIcon(icon("redo"))
+        redo.setToolTip("<b>Redo</b><br>Redo the last undone change.<br>Shortcut: Ctrl+Shift+Z")
+        self.addAction(undo)
+        self.addAction(redo)
+        actions.update(undo=undo, redo=redo)
+        self.show_sketches = actions["sketches"]
+        self.show_planes = actions["planes"]
         for toggle in (self.show_sketches, self.show_planes):
             toggle.setCheckable(True)
             toggle.setChecked(True)
+        self.show_planes.toggled.connect(self.tree.set_planes_visible)
+        self.actions = actions
+        self.ribbon = Ribbon(actions, self)
+        self.setMenuWidget(self.ribbon)
 
-        file_menu = self.menuBar().addMenu("&File")
-        file_menu.addActions([
-            self._action("&New", self.new_document, "Ctrl+N", "Start a new part"),
-            self._action("&Open…", self.open_document, "Ctrl+O", "Open a .sillycad file"),
-            self._action("&Save", self.save, "Ctrl+S", "Save the part"),
-            self._action("Save &As…", self.save_as, "Ctrl+Shift+S", "Save under a new name"),
-        ])  # fmt: skip
-        file_menu.addSeparator()
-        file_menu.addAction(self._action("Export &STL…", self.export_stl, "Ctrl+E"))
-        file_menu.addSeparator()
-        quit_action = file_menu.addAction("&Quit")
-        quit_action.setShortcut(QKeySequence.StandardKey.Quit)
-        quit_action.triggered.connect(self.close)
-        edit_menu = self.menuBar().addMenu("&Edit")
-        edit_menu.addActions([undo, redo])
-        create_menu = self.menuBar().addMenu("&Create")
-        create_menu.addActions([new_sketch, pad, pocket, revolve])
-        view_menu = self.menuBar().addMenu("&View")
-        view_menu.addActions([*views, self.show_sketches, self.show_planes])
+    def _toggle_planes(self) -> None:
+        self.show_planes.trigger()
 
-        bar = self.addToolBar("Main")
-        bar.setMovable(False)
-        bar.addActions([new_sketch, pad, pocket, revolve])
-        bar.addSeparator()
-        bar.addActions([undo, redo])
-        bar.addSeparator()
-        bar.addActions(views)
-        bar.addSeparator()
-        bar.addActions([self.show_sketches, self.show_planes])
+    def _select_plane(self, plane: str | None) -> None:
+        self.picked_plane = plane
+        if plane is not None:
+            self.picked_face = None
+            self.statusBar().showMessage(f"{plane} plane picked. Click Start 2D Sketch.")
 
     # ── Model ───────────────────────────────────────────────────────
 
@@ -164,13 +264,16 @@ class MainWindow(QMainWindow):
         self.model = recompute(self.doc)
         self.tree.fill(self.doc, self.model.errors)
         self.update_view(fit=fit or (first_solid and self.model.shape is not None))
+        self.volume_status.setText(
+            f"Body volume: {volume(self.model.shape):,.1f} mm³"
+            if self.model.shape is not None
+            else ""
+        )
         if self.model.errors:
             fid, message = next(iter(self.model.errors.items()))
             self.statusBar().showMessage(f"⚠ {self.doc.find(fid).name} failed: {message}")
-        elif self.model.shape is not None:
-            self.statusBar().showMessage(f"Body volume: {volume(self.model.shape):,.1f} mm³")
         else:
-            self.statusBar().showMessage("Ready. Click New Sketch to start.")
+            self.statusBar().showMessage("Ready")
 
     def update_view(self, fit: bool = False, model: Model | None = None) -> None:
         """Redraw the 3D view (optionally for a preview model)."""
@@ -188,11 +291,14 @@ class MainWindow(QMainWindow):
     def _picked(self, shapes: list[TopoDS_Shape]) -> None:
         faces = [topods.Face(s) for s in shapes if s.ShapeType() == TopAbs_FACE]
         self.picked_face = faces[0] if faces else None
+        self.picked_plane = None
         if self.picked_face is not None:
-            self.statusBar().showMessage("Face picked. Click New Sketch (N) to sketch on it.")
+            self.statusBar().showMessage("Face picked. Click Start 2D Sketch (N).")
 
     def _picked_plane(self) -> tuple[str, float, Placement | None] | None:
-        """(plane, offset, face plane) of the picked face, if a flat one is picked."""
+        """Return the selected base plane or the plane of a picked flat face."""
+        if self.picked_plane is not None:
+            return self.picked_plane, 0.0, None
         if self.picked_face is None:
             return None
         try:
@@ -254,7 +360,8 @@ class MainWindow(QMainWindow):
         if sketch is None:
             QMessageBox.information(self, kind.__name__, "Draw a sketch first (New Sketch).")
             return
-        feature = kind(self.doc.new_id(), self.doc.new_name(kind.__name__), sketch.id)
+        name = "Revolution" if kind is Revolve else "Extrusion"
+        feature = kind(self.doc.new_id(), self.doc.new_name(name), sketch.id)
         dialog = FeatureDialog(feature, self.doc.sketches(), self._preview, self)
         if dialog.exec():
             new = dialog.feature
@@ -338,9 +445,14 @@ class MainWindow(QMainWindow):
         name = self.path.name if self.path else "Untitled"
         unsaved = "" if self.undo_stack.isClean() else " *"
         self.setWindowTitle(f"{name}{unsaved} — SillyCAD")
+        self.document_tabs.setTabText(0, f"{name}{unsaved}")
+        self.tree.set_document_name(f"{name}{unsaved}")
 
     def _set_document(self, doc: Document, path: Path | None) -> None:
         self.doc, self.path = doc, path
+        self.picked_face = None
+        self.picked_plane = None
+        self.tree.setCurrentItem(None)
         self.undo_stack.clear()
         self.model = Model(None, {})
         self.recompute(fit=True)
@@ -452,6 +564,8 @@ def run() -> int:
     font.setFamilies(UI_FONTS)
     font.setStyleHint(QFont.StyleHint.Cursive)
     app.setFont(font)
+    app.setStyle("Fusion")
+    app.setStyleSheet(theme.STYLESHEET)
 
     window = MainWindow()
     window.resize(1300, 850)

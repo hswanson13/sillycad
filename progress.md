@@ -2,9 +2,9 @@
 
 # SillyCAD Progress
 
-**Where we are:** 🎉 All done: M1–M5 plus sketching on faces. 53 tests pass.
+**Where we are:** 🎉 M1–M5, sketching on faces, and U1 (shell and theme) are done. 58 tests pass.
 
-**Needs you:** try M5 (and "Sketch on a face" if you haven't yet), and tell me what you'd like next.
+**Needs you:** try U1 below and confirm before U2 (viewport).
 
 Legend: ✅ done · 🔨 in progress · ⬜ not started
 
@@ -83,9 +83,51 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 - [x] Polite errors for files from a newer version, or broken files
 - [x] Tests: save, open, recompute gives the same volume, and everything survives the round trip (53 tests total)
 
+## ✅ U1: Inventor-style shell and theme
+
+**You'll be able to:** use the ribbon and Model browser without losing any of the existing modeling tools.
+
+- [x] Light-themed File, 3D Model and View ribbon, original icons, and Quick Access Toolbar
+- [x] Extrude menu for Join (Pad) and Cut (Pocket); new solids are named Extrusion and Revolution
+- [x] Model browser with Origin, plane picking, visibility eye, nested consumed sketches and failure badges
+- [x] Document tab with the file name and unsaved `*`; body volume on the right of the status bar
+- [x] Existing separate sketch editor, feature dialogs, live preview, file operations and undo/redo still work
+- [x] `E` for Extrude, `F6` for Home view and `Home` for Zoom All; both documented redo shortcuts work in the main window and sketch editor
+- [x] Tests for browser nesting, Origin, action shortcuts, save state and sketch redo (58 tests total)
+
+**Still to come:** viewport colors and navigation (U2), sketching in the main window (U3), and feature Property Panels (U4). The viewport and sketch editor retain their previous appearance and workflows for now.
+
 ---
 
 ## How to try it
+
+### U1
+
+```bash
+conda activate sillycad
+python -m sillycad
+```
+
+1. Try **File** and the Quick Access buttons. The **3D Model** and **View** tabs have the existing modeling and view commands.
+2. Expand **Origin** in the Model browser, click **XZ Plane**, then click **Start 2D Sketch** (`N`). The existing plane dialog should start on XZ; try its offset field.
+3. Draw a closed rectangle in the separate sketch editor and click **✔ Finish**. Open **Extrude** (`E`) and choose **Join (Pad)**; change the length and check the live preview, then click OK.
+4. The browser should show **Extrusion1** with **Sketch1** nested underneath. Double-click either to edit it; try `F2`, `Del` (and the dependent warning), and undo.
+5. Click the Origin eye to hide and show planes and axes. On **View**, try Shaded/Wireframe, sketch visibility, Zoom All and the standard views.
+6. Save the part, make an edit, and check the `*` in both the title and document tab. Undo and redo with `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`); save and reopen the part. Export STL and check the triangle-count message.
+7. Run `ruff check .`, `ruff format --check .` and `pytest`; all 58 tests should pass.
+
+**Main-window keys**
+
+| Action | Key | Action | Key |
+|---|---|---|---|
+| New / Open | `Ctrl+N` / `Ctrl+O` | Save / Save As | `Ctrl+S` / `Ctrl+Shift+S` |
+| Export STL | `Ctrl+E` | Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` or `Ctrl+Y` |
+| Start 2D Sketch | `N` | Extrude menu | `E` |
+| Join (Pad) / Cut (Pocket) | `P` / `O` | Revolve | `R` |
+| Zoom All | `F` / `Home` | Home view | `0` / `F6` |
+| Front / Top / Right | `1` / `2` / `3` | Shaded / Wireframe | `S` / `W` |
+
+The sketch editor keys are unchanged; see the table under M3. The M1–M5 walkthroughs below describe the historical UI and are superseded by U1 where they differ.
 
 ### M1
 

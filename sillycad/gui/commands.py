@@ -4,7 +4,17 @@ import copy
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtGui import QUndoCommand
+from PySide6.QtGui import QKeySequence, QUndoCommand
+
+
+def redo_shortcuts() -> list[QKeySequence]:
+    """Keep platform redo bindings and the documented cross-platform aliases."""
+    shortcuts = QKeySequence.keyBindings(QKeySequence.StandardKey.Redo)
+    for key in ("Ctrl+Shift+Z", "Ctrl+Y"):
+        shortcut = QKeySequence(key)
+        if shortcut not in shortcuts:
+            shortcuts.append(shortcut)
+    return shortcuts
 
 
 class SnapshotCommand(QUndoCommand):

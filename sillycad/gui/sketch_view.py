@@ -35,6 +35,7 @@ from sillycad.core.sketch import (
     Point,
     Sketch,
 )
+from sillycad.gui import theme
 
 if TYPE_CHECKING:
     from sillycad.gui.sketch_editor import SketchEditor
@@ -43,15 +44,15 @@ PICK_PX = 8  # how close (pixels) the mouse must be to pick or snap
 DRAG_PX = 4  # how far (pixels) the mouse must move before a press becomes a drag
 CLICKS_NEEDED = {"point": 1, "line": 2, "circle": 2, "arc": 3}
 
-BACKGROUND = QColor("#fbfcfe")
-GRID_MINOR, GRID_MAJOR = QColor("#edf0f5"), QColor("#d5dbe5")
-AXIS_X, AXIS_Y = QColor("#e06666"), QColor("#6aa84f")
-INK = QColor("#1f2d3d")  # under-constrained
-DONE = QColor("#1b8a3c")  # fully constrained
-BAD = QColor("#d62828")  # conflicting / redundant / profile problem
-PICKED = QColor("#ff7f00")  # selected
-HOVER = QColor("#2f80ed")  # under the mouse, and previews
-REFERENCE = QColor("#9aa3b2")  # outline of the face being sketched on
+BACKGROUND = QColor(theme.SKETCH_BACKGROUND)
+GRID_MINOR, GRID_MAJOR = QColor(theme.SKETCH_GRID_MINOR), QColor(theme.SKETCH_GRID_MAJOR)
+AXIS_X, AXIS_Y = QColor(theme.SKETCH_AXIS_X), QColor(theme.SKETCH_AXIS_Y)
+INK = QColor(theme.SKETCH_FREE)
+DONE = QColor(theme.SUCCESS)
+BAD = QColor(theme.ERROR)
+PICKED = QColor(theme.SKETCH_SELECTED)
+HOVER = QColor(theme.SKETCH_HOVER)
+REFERENCE = QColor(theme.SKETCH_REFERENCE)
 
 
 class SketchView(QGraphicsView):
@@ -429,7 +430,7 @@ class SketchView(QGraphicsView):
         text.setBrush(color)
         r = text.boundingRect().adjusted(-4, -2, 4, 2)
         box = QGraphicsRectItem(r)
-        box.setBrush(QColor(255, 255, 255, 230))
+        box.setBrush(QColor(theme.SKETCH_DIMENSION_BACKGROUND))
         box.setPen(QPen(color, 1))
         box.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
         box.setTransform(QTransform.fromTranslate(-r.width() / 2, -r.height() / 2))

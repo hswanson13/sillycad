@@ -21,9 +21,9 @@ from OCC.Display.OCCViewer import rgb_color  # noqa: E402
 from OCC.Display.qtDisplay import qtViewer3d  # noqa: E402
 
 from sillycad.core.geometry import BASE_PLANES, plane_axes, plane_trsf  # noqa: E402
+from sillycad.gui import theme  # noqa: E402
 
-SKETCH_COLOR = rgb_color(0.1, 0.3, 1.0)
-PLANE_COLORS = {"XY": (0.25, 0.45, 0.95), "XZ": (0.25, 0.7, 0.3), "YZ": (0.9, 0.3, 0.3)}
+SKETCH_COLOR = rgb_color(*theme.VIEW_SKETCH)
 
 
 class Viewer(qtViewer3d):
@@ -33,6 +33,7 @@ class Viewer(qtViewer3d):
         """Create the OCCT viewer. Needs a real native window, so call after show()."""
         self.InitDriver()
         self._press_at: QPointF | None = None
+        self._display_mode = "shaded"
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         self._press_at = event.position()
@@ -61,9 +62,9 @@ class Viewer(qtViewer3d):
         size = _model_size(solid)
         if planes:
             self._show_planes(size)
-        trihedron = AIS_Trihedron(Geom_Axis2Placement(gp_Ax2()))
-        trihedron.SetSize(size * 0.6)
-        display.Context.Display(trihedron, False)
+            trihedron = AIS_Trihedron(Geom_Axis2Placement(gp_Ax2()))
+            trihedron.SetSize(size * 0.6)
+            display.Context.Display(trihedron, False)
         if solid is not None:
             display.DisplayShape(solid, update=False)  # default material shades nicely
         for wires in sketches:
@@ -71,10 +72,11 @@ class Viewer(qtViewer3d):
         if fit:
             display.FitAll()
         display.SetSelectionModeFace()  # clicks pick faces (to sketch on)
+        self.set_mode(self._display_mode)
         display.Repaint()
 
     def _show_planes(self, size: float) -> None:
-        for name, color in PLANE_COLORS.items():
+        for name, color in theme.VIEW_PLANES.items():
             face = BRepBuilderAPI_MakeFace(
                 gp_Pln(plane_axes(BASE_PLANES[name])), 0, size, 0, size
             ).Face()
@@ -99,6 +101,11 @@ class Viewer(qtViewer3d):
             "fit": lambda: None,
         }[name]()
         display.FitAll()
+
+    def set_mode(self, mode: str) -> None:
+        """Set the model's shaded or wireframe display mode."""
+        self._display_mode = mode
+        {"shaded": self._display.SetModeShaded, "wireframe": self._display.SetModeWireFrame}[mode]()
 
 
 def _model_size(solid: TopoDS_Shape | None) -> float:

@@ -28,8 +28,8 @@ from PySide6.QtWidgets import (
 from sillycad.core.profiles import ProfileError, find_profiles
 from sillycad.core.sketch import DIMENSIONS, RULES, XY, Constraint, Sketch, check_value, label
 from sillycad.core.solver import SolveResult, drag, solve
-from sillycad.gui.commands import SnapshotCommand
-from sillycad.gui.sketch_view import BAD, DONE, SketchView
+from sillycad.gui.commands import SnapshotCommand, redo_shortcuts
+from sillycad.gui.sketch_view import BAD, SketchView
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +95,7 @@ class SketchEditor(QMainWindow):
         self.setCentralWidget(self.view)
         self._build_side_panel()
         self.status = QLabel()
+        self.status.setObjectName("sketchStatus")
         self.statusBar().addPermanentWidget(self.status)
         self._build_toolbars()
         self._analyse()
@@ -160,7 +161,7 @@ class SketchEditor(QMainWindow):
         undo = self.undo_stack.createUndoAction(self, "Undo")
         undo.setShortcut(QKeySequence.StandardKey.Undo)
         redo = self.undo_stack.createRedoAction(self, "Redo")
-        redo.setShortcuts([QKeySequence(QKeySequence.StandardKey.Redo), QKeySequence("Ctrl+Y")])
+        redo.setShortcuts(redo_shortcuts())
         bar.addAction(undo)
         bar.addAction(redo)
         self._action(bar, "Delete", "Del", self.delete_selection, "delete the selection")
@@ -243,15 +244,17 @@ class SketchEditor(QMainWindow):
         self._fill_list()
         r = self.result
         if r.fully_constrained:
-            short, color = "✔ Fully constrained", DONE.name()
+            short, state = "✔ Fully constrained", "done"
         elif not r.ok:
-            short, color = "⚠ Constraint problem (see right)", BAD.name()
+            short, state = "⚠ Constraint problem (see right)", "error"
         else:
-            short, color = f"Degrees of freedom: {r.dof}", "palette(text)"
+            short, state = f"Degrees of freedom: {r.dof}", ""
         self.status.setText(short)
-        self.status.setStyleSheet(f"color: {color}; font-weight: bold;")
         self.info.setText(r.message)
-        self.info.setStyleSheet(f"color: {color};")
+        for label_widget in (self.status, self.info):
+            label_widget.setProperty("sketchState", state)
+            label_widget.style().unpolish(label_widget)
+            label_widget.style().polish(label_widget)
         self.profile_info.setText(self.profile_text)
 
     def _fill_list(self) -> None:
