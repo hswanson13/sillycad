@@ -3,15 +3,17 @@
 import math
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, QTimer, Signal
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QKeyEvent, QMouseEvent
 
 from sillycad.core.sketch import XY, Arc, Circle, Line, Point, Sketch
 from sillycad.gui.sketch_scene import SketchScene
 from sillycad.sketch_math import (
+    LineAlignment,
     SnapTarget,
     add_rectangle,
     arc_sweep,
     constrain_snap,
+    infer_line_alignment,
     project_to_circle,
 )
 
@@ -41,11 +43,13 @@ class SketchInteraction(QObject):
         self._orbiting = False
         self._passing = False
         self._navigation: str | None = None
+        self._cursor_pos: QPointF | None = None
         self._grid_timer = QTimer(self)
         self._grid_timer.setSingleShot(True)
         self._grid_timer.setInterval(80)
         self._grid_timer.timeout.connect(self.scene.update_grid)
         self.session.changed.connect(scene.redraw)
+        self.session.undo_stack.indexChanged.connect(self._history_changed)
         self.viewer.installEventFilter(self)
 
     def set_tool(self, tool: str) -> None:
@@ -54,6 +58,7 @@ class SketchInteraction(QObject):
         self.clicks = []
         self._rectangle = None
         self._navigation = None
+        self._cursor_pos = None
         self.scene.hover = None
         self.scene.set_preview([])
         self.viewer.setCursor(
@@ -84,6 +89,7 @@ class SketchInteraction(QObject):
         self.viewer.removeEventFilter(self)
         self._grid_timer.stop()
         self.session.changed.disconnect(self.scene.redraw)
+        self.session.undo_stack.indexChanged.disconnect(self._history_changed)
         self.scene.clear()
         self.viewer.unsetCursor()
 
@@ -94,6 +100,21 @@ class SketchInteraction(QObject):
             self.scene.clear_snap()
         if event.type() in (QEvent.Type.Wheel, QEvent.Type.Resize):
             self._grid_timer.start()
+            return False
+        if (
+            isinstance(event, QKeyEvent)
+            and event.type() in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease)
+            and event.key() == Qt.Key.Key_Control
+            and self.tool == "line"
+            and self.clicks
+            and self._cursor_pos is not None
+        ):
+            try:
+                self._preview(
+                    self._cursor_pos, suppress_alignment=event.type() == QEvent.Type.KeyPress
+                )
+            except ValueError as exc:
+                self.session.message.emit(str(exc))
             return False
         if not isinstance(event, QMouseEvent):
             return False
@@ -123,6 +144,7 @@ class SketchInteraction(QObject):
         self.viewer.stop_camera_animation()
         self.viewer.setFocus(Qt.FocusReason.MouseFocusReason)
         pos = event.position()
+        self._cursor_pos = pos
         if event.button() == Qt.MouseButton.RightButton:
             self._right = pos
             self._right_dragged = False
@@ -149,9 +171,12 @@ class SketchInteraction(QObject):
             self._rectangle = self._snap(pos)
             return True
         if self.tool != "select":
-            self.clicks.append(self._snap(pos))
+            point, target, alignment = self._drawing_point(
+                pos, bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+            )
+            self.clicks.append((point, target))
             if len(self.clicks) == _CLICKS[self.tool]:
-                self._create_shape(pos)
+                self._create_shape(pos, alignment)
             return True
         picked = self.scene.pick(pos)
         selection = list(self.session.selection)
@@ -175,6 +200,7 @@ class SketchInteraction(QObject):
 
     def _mouse_move(self, event: QMouseEvent) -> bool:
         pos = event.position()
+        self._cursor_pos = pos
         if self._orbiting:
             self.viewer._display.Rotation(round(pos.x()), round(pos.y()))
             self._grid_timer.start()
@@ -194,7 +220,7 @@ class SketchInteraction(QObject):
         xy = self.scene.to_sketch(pos)
         self.coordinates.emit(*xy)
         if self._rectangle is not None:
-            self._preview(pos)
+            self._preview(pos, bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier))
             return True
         if self._press is not None:
             start_pos, start_xy, picked = self._press
@@ -230,7 +256,7 @@ class SketchInteraction(QObject):
                         )
             return True
         if self.tool != "select":
-            self._preview(pos)
+            self._preview(pos, bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier))
             return True
         hover = self.scene.pick(pos)
         if hover != self.scene.hover:
@@ -294,8 +320,23 @@ class SketchInteraction(QObject):
                 return self.scene.to_sketch(pos), None
         return point, target
 
-    def _preview(self, pos: QPointF) -> None:
+    def _history_changed(self, _index: int) -> None:
+        if self.clicks or self._rectangle:
+            self.clicks = []
+            self._rectangle = None
+            self.scene.set_preview([])
+
+    def _drawing_point(
+        self, pos: QPointF, suppress_alignment: bool
+    ) -> tuple[XY, SnapTarget | None, LineAlignment | None]:
         point, target = self._snap(pos)
+        if self.tool == "line" and self.clicks and target is None and not suppress_alignment:
+            point, alignment = infer_line_alignment(self.clicks[0][0], point)
+            return point, None, alignment
+        return point, target, None
+
+    def _preview(self, pos: QPointF, suppress_alignment: bool = False) -> None:
+        point, target, alignment = self._drawing_point(pos, suppress_alignment)
         clicks = self.clicks
         segments: list[tuple[XY, XY]] = []
         if self._rectangle is not None:
@@ -323,9 +364,9 @@ class SketchInteraction(QObject):
                     for i in range(65)
                 ]
                 segments = list(zip(points, points[1:], strict=False))
-        self.scene.set_preview(segments, target)
+        self.scene.set_preview(segments, target, aligned=alignment is not None)
 
-    def _create_shape(self, pos: QPointF) -> None:
+    def _create_shape(self, pos: QPointF, alignment: LineAlignment | None = None) -> None:
         tool, clicks = self.tool, self.clicks
         positions, snaps = [point for point, _ in clicks], [snap for _, snap in clicks]
         threshold = self.scene.tolerance(pos, 2)
@@ -341,6 +382,8 @@ class SketchInteraction(QObject):
                 line = sketch.geo[gid]
                 assert isinstance(line, Line)
                 ends = list(line.points)
+                if alignment is not None:
+                    sketch.add_constraint(alignment, [gid])
             elif tool == "circle":
                 radius = math.dist(*positions)
                 if radius < threshold:

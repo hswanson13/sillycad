@@ -17,6 +17,7 @@ from sillycad.core.document import Document
 from sillycad.core.features import Pad, Pocket, Revolve, SketchFeature
 from sillycad.core.geometry import face_placement, volume
 from sillycad.core.sketch import ORIGIN, Arc, Circle, Line, Point, Sketch
+from sillycad.gui import theme
 from sillycad.gui.main_window import MainWindow
 from sillycad.sketch_math import add_rectangle
 
@@ -139,6 +140,143 @@ def exercise_key_point_snapping(window: MainWindow, tmp_path: Path) -> None:
     arc = next(g for g in mode.session.sketch.geo.values() if isinstance(g, Arc))
     assert not any(arc.end in c.refs for c in mode.session.sketch.constraints.values())
 
+    mode.actions["finish"].trigger()
+
+
+def exercise_line_inference(window: MainWindow, tmp_path: Path) -> None:
+    """Verify aligned previews and constraints while sketching on a solid face."""
+    base = Sketch()
+    add_rectangle(base, (0, 0), (60, 40))
+    window._set_document(
+        Document([SketchFeature("s1", "Sketch1", sketch=base), Pad("p1", "Pad1", "s1")]),
+        None,
+    )
+    window._start_sketch("XY", 10, None)
+    QTest.qWait(550)
+    mode = window._sketch_mode
+    assert mode is not None
+
+    def position(point: tuple[float, float]) -> QPoint:
+        return mode.scene.screen(point).toPoint()
+
+    def click(point: tuple[float, float], modifiers: Qt.KeyboardModifier = Qt.NoModifier) -> None:
+        QTest.mouseClick(window.viewer, Qt.MouseButton.LeftButton, modifiers, position(point))
+
+    mode.actions["line"].trigger()
+    click((10, 10))
+    start = mode.interaction.clicks[0][0]
+    QTest.mouseMove(window.viewer, position((40, 10.8)), delay=20)
+    assert mode.scene._preview_aligned
+    assert mode.scene._preview[0][1][1] == start[1]
+    assert mode.scene._signatures["preview"][1] == theme.SKETCH_SNAP
+    image_path = tmp_path / "alignment.png"
+    assert window.viewer._display.View.Dump(str(image_path))
+    image = QImage(str(image_path))
+    line_pos = mode.scene.screen((25, start[1])).toPoint()
+    green_pixels = 0
+    for y in range(line_pos.y() - 3, line_pos.y() + 4):
+        for x in range(line_pos.x() - 10, line_pos.x() + 11):
+            color = image.pixelColor(x, y)
+            if color.green() > 100 and color.green() > 1.3 * max(color.red(), color.blue()):
+                green_pixels += 1
+    assert green_pixels >= 10
+    click((40, 10.8))
+    first = next(g for g in mode.session.sketch.geo.values() if isinstance(g, Line))
+    assert any(
+        c.kind == "horizontal" and c.refs == [first.id]
+        for c in mode.session.sketch.constraints.values()
+    )
+    assert mode.session.sketch.point(first.p1)[1] == pytest.approx(
+        mode.session.sketch.point(first.p2)[1]
+    )
+    assert mode.interaction.clicks
+    mode.session.undo_stack.undo()
+    assert not mode.interaction.clicks
+    assert first.id not in mode.session.sketch.geo
+    mode.session.undo_stack.redo()
+    assert first.id in mode.session.sketch.geo
+
+    mode.actions["line"].trigger()
+    click(mode.session.sketch.point(first.p2))
+    QTest.mouseMove(window.viewer, position((40.8, 30)), delay=20)
+    assert mode.scene._preview_aligned
+    click((40.8, 30))
+    vertical = [g for g in mode.session.sketch.geo.values() if isinstance(g, Line)][-1]
+    assert any(
+        c.kind == "vertical" and c.refs == [vertical.id]
+        for c in mode.session.sketch.constraints.values()
+    )
+    assert mode.session.sketch.point(vertical.p1)[0] == pytest.approx(
+        mode.session.sketch.point(vertical.p2)[0]
+    )
+    assert any(
+        c.kind == "coincident" and set(c.refs) == {first.p2, vertical.p1}
+        for c in mode.session.sketch.constraints.values()
+    )
+
+    mode.actions["line"].trigger()
+    click((10, 25))
+    QTest.mouseMove(window.viewer, position((30, 25.5)), delay=20)
+    assert mode.scene._preview_aligned
+    QTest.keyPress(window.viewer, Qt.Key.Key_Control)
+    assert not mode.scene._preview_aligned
+    assert mode.scene._signatures["preview"][1] == theme.SKETCH_HOVER
+    QTest.keyRelease(window.viewer, Qt.Key.Key_Control)
+    assert mode.scene._preview_aligned
+    click((30, 25.5), Qt.KeyboardModifier.ControlModifier)
+    free = [g for g in mode.session.sketch.geo.values() if isinstance(g, Line)][-1]
+    assert not any(
+        c.kind in ("horizontal", "vertical") and c.refs == [free.id]
+        for c in mode.session.sketch.constraints.values()
+    )
+    assert abs(mode.session.sketch.point(free.p1)[1] - mode.session.sketch.point(free.p2)[1]) > 0.1
+
+    mode.session.edit("Snap target", lambda sketch: sketch.add_point(50, 35.5))
+    target = next(
+        g
+        for g in mode.session.sketch.geo.values()
+        if isinstance(g, Point) and (g.x, g.y) == pytest.approx((50, 35.5))
+    )
+    mode.actions["line"].trigger()
+    click((20, 35))
+    QTest.mouseMove(window.viewer, position((50, 35.5)), delay=20)
+    assert not mode.scene._preview_aligned
+    assert mode.scene._snap_target is not None and mode.scene._snap_target.ref == target.id
+    click((50, 35.5))
+    snapped = [g for g in mode.session.sketch.geo.values() if isinstance(g, Line)][-1]
+    assert mode.session.sketch.point(snapped.p2) == pytest.approx((50, 35.5))
+    assert any(
+        c.kind == "coincident" and target.id in c.refs
+        for c in mode.session.sketch.constraints.values()
+    )
+    assert not any(
+        c.kind in ("horizontal", "vertical") and c.refs == [snapped.id]
+        for c in mode.session.sketch.constraints.values()
+    )
+    mode.actions["finish"].trigger()
+
+    window._start_sketch("XZ", 0, None)
+    QTest.qWait(550)
+    mode = window._sketch_mode
+    assert mode is not None
+    center = window.viewer.rect().center()
+    QTest.mousePress(
+        window.viewer, Qt.MouseButton.MiddleButton, Qt.KeyboardModifier.ShiftModifier, center
+    )
+    QTest.mouseMove(window.viewer, center + QPoint(30, 20), delay=20)
+    QTest.mouseRelease(window.viewer, Qt.MouseButton.MiddleButton, pos=center + QPoint(30, 20))
+    mode.actions["line"].trigger()
+    click((10, 3))
+    start = mode.interaction.clicks[0][0]
+    QTest.mouseMove(window.viewer, position((40, 3.8)), delay=20)
+    assert mode.scene._preview_aligned
+    assert mode.scene._preview[0][1][1] == start[1]
+    click((40, 3.8))
+    line = next(g for g in mode.session.sketch.geo.values() if isinstance(g, Line))
+    assert any(
+        c.kind == "horizontal" and c.refs == [line.id]
+        for c in mode.session.sketch.constraints.values()
+    )
     mode.actions["finish"].trigger()
 
 
@@ -333,6 +471,7 @@ def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         exercise_feature_panels(window)
         exercise_drawing_tools(window)
         exercise_key_point_snapping(window, tmp_path)
+        exercise_line_inference(window, tmp_path)
     finally:
         if window._sketch_mode is not None:
             window._sketch_mode.session.undo_stack.setClean()

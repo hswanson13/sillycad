@@ -9,6 +9,8 @@ from sillycad.core.geometry import Placement
 from sillycad.core.sketch import AXES, ORIGIN, XY, Arc, Circle, Constraint, Line, Point, Sketch
 
 XYZ = tuple[float, float, float]
+LineAlignment = Literal["horizontal", "vertical"]
+LINE_SNAP_ANGLE = 5.0
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,19 @@ def constrain_snap(sketch: Sketch, point: str, target: SnapTarget | None) -> Non
     sketch.add_constraint(
         "coincident" if target.kind == "point" else "midpoint", [point, target.ref]
     )
+
+
+def infer_line_alignment(start: XY, end: XY) -> tuple[XY, LineAlignment | None]:
+    """Align a line within five degrees of a sketch axis, otherwise leave it free."""
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    if dx == 0 and dy == 0:
+        return end, None
+    slope = math.tan(math.radians(LINE_SNAP_ANGLE))
+    if abs(dy) <= abs(dx) * slope:
+        return (end[0], start[1]), "horizontal"
+    if abs(dx) <= abs(dy) * slope:
+        return (start[0], end[1]), "vertical"
+    return end, None
 
 
 def _dot(a: XYZ, b: XYZ) -> float:

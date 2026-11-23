@@ -14,6 +14,7 @@ from sillycad.sketch_math import (
     constrain_snap,
     curve_distance,
     infer_dimension,
+    infer_line_alignment,
     ray_to_sketch,
     sketch_to_world,
     snap_targets,
@@ -124,3 +125,34 @@ def test_snap_constraints_follow_points_and_line_midpoints() -> None:
     assert sketch.point(guide_point) == pytest.approx((30, 0))
     with pytest.raises(ValueError, match="no sketch reference"):
         constrain_snap(sketch, point, SnapTarget((0, 0), "point"))
+
+
+@pytest.mark.parametrize("direction", [1, -1])
+@pytest.mark.parametrize("axis", ["horizontal", "vertical"])
+def test_line_alignment_exact_five_degree_threshold(direction: int, axis: str) -> None:
+    start = (4.0, -3.0)
+
+    def endpoint(angle: float) -> tuple[float, float]:
+        long = direction * 100
+        short = 100 * math.tan(math.radians(angle))
+        return (
+            (start[0] + long, start[1] + short)
+            if axis == "horizontal"
+            else (start[0] + short, start[1] + long)
+        )
+
+    for angle in (0, 4.99, 5.0):
+        point, alignment = infer_line_alignment(start, endpoint(angle))
+        assert alignment == axis
+        if axis == "horizontal":
+            assert point == pytest.approx((endpoint(angle)[0], start[1]))
+        else:
+            assert point == pytest.approx((start[0], endpoint(angle)[1]))
+    point, alignment = infer_line_alignment(start, endpoint(5.01))
+    assert point == pytest.approx(endpoint(5.01))
+    assert alignment is None
+
+
+def test_line_alignment_leaves_zero_and_diagonal_lines_free() -> None:
+    assert infer_line_alignment((1, 2), (1, 2)) == ((1, 2), None)
+    assert infer_line_alignment((1, 2), (11, 12)) == ((11, 12), None)

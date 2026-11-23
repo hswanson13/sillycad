@@ -2,9 +2,9 @@
 
 # SillyCAD Progress
 
-**Where we are:** 🎉 M1–M5, sketching on faces, and U1–U5 are done. The headless suite has 99 passing tests; the additional native-window test passes when enabled. U6 (straight-line inference) and U7 (holes and threads) are next.
+**Where we are:** 🎉 M1–M5, sketching on faces, and U1–U6 are done. The headless suite has 104 passing tests; the additional native-window test passes when enabled. U7 (holes and threads) is next.
 
-**Needs you:** try the U5 workflow below and confirm before starting U6.
+**Needs you:** try the U6 workflow below and confirm before starting U7.
 
 Legend: ✅ done · 🔨 in progress · ⬜ not started
 
@@ -144,9 +144,14 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 - [x] Pixel-based picking works at different zoom levels. Markers clear when changing tools, leaving the viewport, or invalidating the target; undo / redo and drawing tools remain available.
 - [x] Ruff passes. The headless suite has 99 passed and one native-window test skipped; that native test passes separately and covers rendering the green dot, undo / redo, drawing tools and face sketches.
 
-## ⬜ U6: Straight-line inference
+## ✅ U6: Straight-line inference
 
-**You'll be able to:** draw horizontal and vertical lines with green alignment feedback while retaining free-angle drawing.
+**You'll be able to:** draw horizontal and vertical lines with green alignment feedback, including on an extruded face.
+
+- [x] A line drawn within 5° of a sketch axis snaps horizontal or vertical. The preview turns green and the committed line receives the matching solver constraint.
+- [x] Hold `Ctrl` while drawing to temporarily turn off line alignment; key-point snaps still work. A snapped key point takes precedence and does not add an extra orientation constraint.
+- [x] The same inference follows sketch axes on face sketches, including after orbiting. Undo / redo cancels an unfinished chain so it cannot retain a deleted endpoint.
+- [x] Ruff passes. The headless suite has 104 passed and one native-window test skipped; that native test passes separately and covers preview rendering, constraints, key-point precedence, undo / redo and sketches on top and side faces.
 
 ## ⬜ U7: Holes and threads
 
@@ -155,6 +160,21 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 ---
 
 ## How to try it
+
+### U6
+
+```bash
+conda activate sillycad
+python -m sillycad
+```
+
+1. Start a sketch and choose **Line** (`L`). Click a starting point and move almost horizontally, then almost vertically: the preview should turn green and lock to the nearest sketch axis. Click to create each line and check the horizontal or vertical constraint glyph.
+2. Move outside the 5° range to draw a diagonal. Move back into the green range and hold `Ctrl`: the preview returns to blue and clicking creates a free-angle line. Release `Ctrl` to restore inference.
+3. Hover over an existing point: its green dot wins over alignment, and the endpoint remains exactly on the point. Undo or redo an unfinished chain, then draw again.
+4. Finish a separate closed rectangle and use **Extrude** (`E`) → **Join** to make a block. Start a sketch on its top or side face and repeat. Orbit with Shift+middle-drag and verify that alignment still follows the sketch axes.
+5. Run `ruff check .`, `ruff format --check .`, and `pytest`; on X11 / XWayland, also run `SILLYCAD_NATIVE_GUI_TESTS=1 QT_QPA_PLATFORM=xcb pytest -q tests/test_sketch_native.py`.
+
+**Sketch keys:** `L` Line · hold `Ctrl` while drawing to suppress line alignment · `Esc` cancel / Select · `Ctrl+Z` undo · `Ctrl+Shift+Z` or `Ctrl+Y` redo · `Ctrl+Enter` Finish · `F5` Look At sketch.
 
 ### U5
 

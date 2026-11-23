@@ -67,6 +67,7 @@ class SketchScene:
         self._signatures: dict[str, object] = {}
         self._anchors: dict[str, XY] = {}
         self._preview: list[tuple[XY, XY]] = []
+        self._preview_aligned = False
         self._snap_target: SnapTarget | None = None
         self._static_geometry()
         self.update_grid()
@@ -289,9 +290,16 @@ class SketchScene:
             x, y = sketch.point(curve.center)
         return x + nudge, y + nudge
 
-    def set_preview(self, segments: list[tuple[XY, XY]], snap: SnapTarget | None = None) -> None:
+    def set_preview(
+        self,
+        segments: list[tuple[XY, XY]],
+        snap: SnapTarget | None = None,
+        *,
+        aligned: bool = False,
+    ) -> None:
         """Display temporary drawing geometry and its current snap marker."""
         self._preview = segments
+        self._preview_aligned = aligned
         self._snap_target = snap
         self.redraw()
 
@@ -303,9 +311,15 @@ class SketchScene:
         self.redraw()
 
     def _auxiliary(
-        self, key: str, segments: list[tuple[XY, XY]], color: str, *, infinite: bool = False
+        self,
+        key: str,
+        segments: list[tuple[XY, XY]],
+        color: str,
+        *,
+        infinite: bool = False,
+        width: float | None = None,
     ) -> None:
-        signature = (tuple(segments), color)
+        signature = (tuple(segments), color, width)
         if self._signatures.get(key) == signature:
             return
         shape = self._linework(segments)
@@ -316,7 +330,10 @@ class SketchScene:
             self._display(key, item)
         else:
             item.SetShape(shape)
-        item.SetColor(_color(color))
+        color_value = _color(color)
+        item.SetColor(color_value)
+        if width is not None:
+            item.Attributes().SetLineAspect(Prs3d_LineAspect(color_value, Aspect_TOL_SOLID, width))
         self.context.Redisplay(item, False)
         self._signatures[key] = signature
 
@@ -389,7 +406,12 @@ class SketchScene:
         nudge = self.viewer._display.View.Convert(12)
         if self._preview:
             alive.add("preview")
-            self._auxiliary("preview", self._preview, theme.SKETCH_HOVER)
+            self._auxiliary(
+                "preview",
+                self._preview,
+                theme.SKETCH_SNAP if self._preview_aligned else theme.SKETCH_HOVER,
+                width=2.0,
+            )
         if self._snap_target is not None:
             alive.add("snap")
             self._point("snap", self._snap_target.point, theme.SKETCH_SNAP, marker=True)
