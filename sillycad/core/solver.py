@@ -227,7 +227,7 @@ class _System:
             return list(g.fix_point(P[r[0]], x, y))
 
         # Dimensions: the value is a fixed parameter the solver can't change.
-        value = g.add_fixed_param(math.radians(c.value) if k == "angle" else c.value)
+        value = g.add_fixed_param(math.radians(c.value) if k in ("angle", "arc_angle") else c.value)
         if k == "distance":
             if len(r) == 1:
                 line = self.sketch.geo[r[0]]
@@ -242,6 +242,8 @@ class _System:
             return [g.difference(a, b, value)]  # b - a = value
         if k == "angle":
             return [g.l2l_angle(L[r[0]], L[r[1]], value)]
+        if k == "arc_angle":
+            return [g.arc_angle(R[r[0]], value)]
         if k in ("radius", "diameter"):
             arc = isinstance(self.sketch.geo[r[0]], Arc)
             if k == "radius":

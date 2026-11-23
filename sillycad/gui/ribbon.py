@@ -151,7 +151,15 @@ class Ribbon(QWidget):
         dimension = _button(actions["smart_dimension"], large=True)
         menu = QMenu(dimension)
         menu.setToolTipsVisible(True)
-        for kind in ("distance", "distance_x", "distance_y", "angle", "radius", "diameter"):
+        for kind in (
+            "distance",
+            "distance_x",
+            "distance_y",
+            "angle",
+            "arc_angle",
+            "radius",
+            "diameter",
+        ):
             menu.addAction(actions[kind])
         dimension.setMenu(menu)
         dimension.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)

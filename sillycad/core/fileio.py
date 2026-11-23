@@ -18,7 +18,7 @@ from sillycad.core.geometry import XYZ, Placement
 from sillycad.core.sketch import XY, Arc, Circle, Constraint, Line, Point, Sketch
 from sillycad.core.threads import ThreadSpec
 
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 SUFFIX = ".sillycad"
 
 _FEATURES: dict[str, type] = {

@@ -145,7 +145,7 @@ def test_version_one_loads_and_hole_thread_round_trips() -> None:
     assert from_dict(old_with_pocket).features[-1].thread is None
     doc, _ = hole_document(thread=ThreadSpec("ISO metric", "M6 x 1", "6H", True, 4))
     encoded = to_dict(doc)
-    assert encoded["format_version"] == 3
+    assert encoded["format_version"] == 4
     restored = from_dict(encoded)
     assert restored == doc
     assert not recompute(restored).errors

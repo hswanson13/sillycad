@@ -5,7 +5,8 @@ import math
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QKeyEvent, QMouseEvent
 
-from sillycad.core.sketch import XY, Arc, Circle, Line, Point, Sketch
+from sillycad.core.sketch import X_AXIS, XY, Arc, Circle, Line, Point, Sketch
+from sillycad.gui.drawing_input import DrawingInput
 from sillycad.gui.sketch_scene import SketchScene
 from sillycad.sketch_math import (
     LineAlignment,
@@ -27,6 +28,7 @@ class SketchInteraction(QObject):
     edit_dimension = Signal(str)
     marking_menu = Signal(QPoint)
     tool_changed = Signal(str)
+    finish_requested = Signal()
 
     def __init__(self, scene: SketchScene, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -38,6 +40,9 @@ class SketchInteraction(QObject):
         self._press: tuple[QPointF, XY, str | None] | None = None
         self._before: Sketch | None = None
         self._rectangle: tuple[XY, SnapTarget | None] | None = None
+        self._rectangle_press: QPointF | None = None
+        self._rectangle_waiting = False
+        self._arc_dimensions: dict[str, float] = {}
         self._right: QPointF | None = None
         self._right_dragged = False
         self._orbiting = False
@@ -48,6 +53,14 @@ class SketchInteraction(QObject):
         self._grid_timer.setSingleShot(True)
         self._grid_timer.setInterval(80)
         self._grid_timer.timeout.connect(self.scene.update_grid)
+        self.dimensions = DrawingInput(self.viewer, self)
+        self.dimensions.changed.connect(self._dimension_changed)
+        self.dimensions.confirm.connect(self._confirm_dimensions)
+        self.dimensions.cancel.connect(self.escape)
+        self.dimensions.control_changed.connect(self._control_changed)
+        self.dimensions.history.connect(self._dimension_history)
+        self.dimensions.finish_sketch.connect(self.finish_requested)
+        self.dimensions.tool_requested.connect(self.set_tool)
         self.session.changed.connect(scene.redraw)
         self.session.undo_stack.indexChanged.connect(self._history_changed)
         self.viewer.installEventFilter(self)
@@ -57,6 +70,9 @@ class SketchInteraction(QObject):
         self.tool = tool
         self.clicks = []
         self._rectangle = None
+        self._rectangle_waiting = False
+        self._arc_dimensions.clear()
+        self.dimensions.clear()
         self._navigation = None
         self._cursor_pos = None
         self.scene.hover = None
@@ -71,6 +87,9 @@ class SketchInteraction(QObject):
         self._navigation = mode
         self.clicks = []
         self._rectangle = None
+        self._rectangle_waiting = False
+        self._arc_dimensions.clear()
+        self.dimensions.clear()
         self.scene.set_preview([])
 
     def escape(self) -> None:
@@ -78,6 +97,9 @@ class SketchInteraction(QObject):
         if self.clicks or self._rectangle:
             self.clicks = []
             self._rectangle = None
+            self._rectangle_waiting = False
+            self._arc_dimensions.clear()
+            self.dimensions.clear()
             self.scene.set_preview([])
         elif self._navigation or self.tool != "select":
             self.set_tool("select")
@@ -88,6 +110,7 @@ class SketchInteraction(QObject):
         """Detach interaction and remove the native sketch presentations."""
         self.viewer.removeEventFilter(self)
         self._grid_timer.stop()
+        self.dimensions.clear()
         self.session.changed.disconnect(self.scene.redraw)
         self.session.undo_stack.indexChanged.disconnect(self._history_changed)
         self.scene.clear()
@@ -168,15 +191,34 @@ class SketchInteraction(QObject):
             return True
         xy = self.scene.to_sketch(pos)
         if self.tool == "rectangle":
-            self._rectangle = self._snap(pos)
+            self._rectangle_press = pos
+            if self._rectangle is None:
+                self._rectangle = self._snap(pos)
+                self._rectangle_waiting = False
+                self.dimensions.begin(("width", "height"))
+                self._preview(pos)
             return True
         if self.tool != "select":
+            if self.clicks:
+                self.dimensions.values(strict=True)
             point, target, alignment = self._drawing_point(
                 pos, bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
             )
+            if self.tool == "arc" and len(self.clicks) == 1:
+                self._arc_dimensions = self.dimensions.values(strict=True)
             self.clicks.append((point, target))
             if len(self.clicks) == _CLICKS[self.tool]:
                 self._create_shape(pos, alignment)
+            elif self.tool != "point":
+                names = (
+                    ("length", "angle")
+                    if self.tool == "line"
+                    else ("sweep",)
+                    if self.tool == "arc" and len(self.clicks) == 2
+                    else ("radius",)
+                )
+                self.dimensions.begin(names)
+                self._preview(pos)
             return True
         picked = self.scene.pick(pos)
         selection = list(self.session.selection)
@@ -290,22 +332,14 @@ class SketchInteraction(QObject):
         if event.button() != Qt.MouseButton.LeftButton:
             return False
         if self._rectangle is not None:
-            start, start_snap = self._rectangle
-            end, end_snap = self._snap(event.position())
-            self._rectangle = None
-
-            def rectangle(sketch: Sketch) -> None:
-                lines = add_rectangle(sketch, start, end)
-                first, opposite = sketch.geo[lines[0]], sketch.geo[lines[2]]
-                assert isinstance(first, Line) and isinstance(opposite, Line)
-                constrain_snap(sketch, first.p1, start_snap)
-                constrain_snap(sketch, opposite.p1, end_snap)
-
-            self.session.edit(
-                "Add rectangle",
-                rectangle,
+            moved = (
+                self._rectangle_press is not None
+                and (event.position() - self._rectangle_press).manhattanLength() > 4
             )
-            self.scene.set_preview([])
+            if self._rectangle_waiting or moved:
+                self._finish_rectangle(event.position())
+            else:
+                self._rectangle_waiting = True
         if self._before is not None:
             self.session.finish_drag(self._before)
             self._before = None
@@ -325,16 +359,50 @@ class SketchInteraction(QObject):
         if self.clicks or self._rectangle:
             self.clicks = []
             self._rectangle = None
+            self._rectangle_waiting = False
+            self._arc_dimensions.clear()
+            self.dimensions.clear()
             self.scene.set_preview([])
 
     def _drawing_point(
         self, pos: QPointF, suppress_alignment: bool
     ) -> tuple[XY, SnapTarget | None, LineAlignment | None]:
         point, target = self._snap(pos)
+        values = self.dimensions.values()
         if self.tool == "line" and self.clicks and target is None and not suppress_alignment:
-            point, alignment = infer_line_alignment(self.clicks[0][0], point)
-            return point, None, alignment
-        return point, target, None
+            if "angle" not in values:
+                point, alignment = infer_line_alignment(self.clicks[0][0], point)
+            else:
+                alignment = None
+        else:
+            alignment = None
+        start = (
+            self._rectangle[0] if self._rectangle else self.clicks[0][0] if self.clicks else None
+        )
+        if start is not None and values:
+            dx, dy = point[0] - start[0], point[1] - start[1]
+            if self.tool == "rectangle":
+                dx = math.copysign(values.get("width", abs(dx)), dx or 1)
+                dy = math.copysign(values.get("height", abs(dy)), dy or 1)
+                point = start[0] + dx, start[1] + dy
+            elif self.tool == "line":
+                length = values.get("length", math.hypot(dx, dy))
+                angle = math.radians(values["angle"]) if "angle" in values else math.atan2(dy, dx)
+                point = start[0] + length * math.cos(angle), start[1] + length * math.sin(angle)
+            elif self.tool in ("circle", "arc") and "radius" in values:
+                angle = math.atan2(dy, dx)
+                point = (
+                    start[0] + values["radius"] * math.cos(angle),
+                    start[1] + values["radius"] * math.sin(angle),
+                )
+            elif self.tool == "arc" and len(self.clicks) == 2 and "sweep" in values:
+                arc_start = self.clicks[1][0]
+                angle = math.atan2(arc_start[1] - start[1], arc_start[0] - start[0])
+                angle += math.radians(values["sweep"])
+                radius = math.dist(start, arc_start)
+                point = start[0] + radius * math.cos(angle), start[1] + radius * math.sin(angle)
+            target = None
+        return point, target, alignment
 
     def _preview(self, pos: QPointF, suppress_alignment: bool = False) -> None:
         point, target, alignment = self._drawing_point(pos, suppress_alignment)
@@ -366,11 +434,102 @@ class SketchInteraction(QObject):
                 ]
                 segments = list(zip(points, points[1:], strict=False))
         self.scene.set_preview(segments, target, aligned=alignment is not None)
+        self._update_dimensions(point)
+
+    def _update_dimensions(self, point: XY) -> None:
+        start = (
+            self._rectangle[0] if self._rectangle else self.clicks[0][0] if self.clicks else None
+        )
+        if start is None:
+            return
+        midpoint = ((start[0] + point[0]) / 2, (start[1] + point[1]) / 2)
+        anchor = self.scene.screen(midpoint)
+        measurements: dict[str, tuple[float, QPointF]] = {}
+        if self.tool == "rectangle":
+            measurements = {
+                "width": (abs(point[0] - start[0]), anchor + QPointF(-98, -14)),
+                "height": (abs(point[1] - start[1]), anchor + QPointF(6, -14)),
+            }
+        elif self.tool == "line":
+            measurements = {
+                "length": (math.dist(start, point), anchor + QPointF(-98, -14)),
+                "angle": (
+                    math.degrees(math.atan2(point[1] - start[1], point[0] - start[0])),
+                    anchor + QPointF(6, -14),
+                ),
+            }
+        elif self.tool in ("circle", "arc") and len(self.clicks) == 1:
+            measurements = {"radius": (math.dist(start, point), anchor + QPointF(6, -14))}
+        elif self.tool == "arc" and len(self.clicks) == 2:
+            _, sweep = arc_sweep(start, self.clicks[1][0], point)
+            measurements = {"sweep": (math.degrees(sweep), anchor + QPointF(6, -14))}
+        self.dimensions.update(measurements)
+
+    def _dimension_changed(self) -> None:
+        if self._cursor_pos is not None:
+            self._preview(self._cursor_pos)
+
+    def _control_changed(self, pressed: bool) -> None:
+        if self.tool == "line" and self.clicks and self._cursor_pos is not None:
+            try:
+                self._preview(self._cursor_pos, suppress_alignment=pressed)
+            except ValueError as exc:
+                self.session.message.emit(str(exc))
+
+    def _dimension_history(self, redo: bool) -> None:
+        if redo:
+            self.session.undo_stack.redo()
+        else:
+            self.session.undo_stack.undo()
+
+    def _confirm_dimensions(self) -> None:
+        try:
+            self.dimensions.values(strict=True)
+            if self._cursor_pos is None:
+                raise ValueError("Move the pointer to choose a drawing direction.")
+            if self._rectangle is not None:
+                self._finish_rectangle(self._cursor_pos)
+            elif self.clicks:
+                point, target, alignment = self._drawing_point(self._cursor_pos, False)
+                if self.tool == "arc" and len(self.clicks) == 1:
+                    self._arc_dimensions = self.dimensions.values(strict=True)
+                self.clicks.append((point, target))
+                if len(self.clicks) == _CLICKS[self.tool]:
+                    self._create_shape(self._cursor_pos, alignment)
+                else:
+                    self.dimensions.begin(("sweep",))
+                    self._preview(self._cursor_pos)
+        except ValueError as exc:
+            self.session.message.emit(str(exc))
+
+    def _finish_rectangle(self, pos: QPointF) -> None:
+        assert self._rectangle is not None
+        values = self.dimensions.values(strict=True)
+        start, start_snap = self._rectangle
+        end, end_snap, _ = self._drawing_point(pos, False)
+
+        def rectangle(sketch: Sketch) -> None:
+            lines = add_rectangle(sketch, start, end)
+            first, opposite = sketch.geo[lines[0]], sketch.geo[lines[2]]
+            assert isinstance(first, Line) and isinstance(opposite, Line)
+            constrain_snap(sketch, first.p1, start_snap)
+            constrain_snap(sketch, opposite.p1, end_snap)
+            if "width" in values:
+                sketch.add_constraint("distance", [lines[0]], values["width"])
+            if "height" in values:
+                sketch.add_constraint("distance", [lines[1]], values["height"])
+
+        if self.session.edit("Add rectangle", rectangle):
+            self._rectangle = None
+            self._rectangle_waiting = False
+            self.dimensions.clear()
+            self.scene.set_preview([])
 
     def _create_shape(self, pos: QPointF, alignment: LineAlignment | None = None) -> None:
         tool, clicks = self.tool, self.clicks
         positions, snaps = [point for point, _ in clicks], [snap for _, snap in clicks]
-        threshold = self.scene.tolerance(pos, 2)
+        values = {**self._arc_dimensions, **self.dimensions.values(strict=True)}
+        threshold = 1e-9 if values else self.scene.tolerance(pos, 2)
         new_end: list[str] = []
 
         def build(sketch: Sketch) -> None:
@@ -385,6 +544,11 @@ class SketchInteraction(QObject):
                 ends = list(line.points)
                 if alignment is not None:
                     sketch.add_constraint(alignment, [gid])
+                if "length" in values:
+                    sketch.add_constraint("distance", [gid], values["length"])
+                if "angle" in values:
+                    angle = (values["angle"] + 180) % 360 - 180
+                    sketch.add_constraint("angle", [X_AXIS, gid], abs(angle))
             elif tool == "circle":
                 radius = math.dist(*positions)
                 if radius < threshold:
@@ -393,6 +557,8 @@ class SketchInteraction(QObject):
                 circle = sketch.geo[gid]
                 assert isinstance(circle, Circle)
                 ends = [circle.center, None]
+                if "radius" in values:
+                    sketch.add_constraint("radius", [gid], values["radius"])
             else:
                 center, start, end = positions
                 radius = math.dist(center, start)
@@ -402,6 +568,10 @@ class SketchInteraction(QObject):
                 arc = sketch.geo[gid]
                 assert isinstance(arc, Arc)
                 ends = [arc.center, arc.start, arc.end]
+                if "radius" in values:
+                    sketch.add_constraint("radius", [gid], values["radius"])
+                if "sweep" in values:
+                    sketch.add_constraint("arc_angle", [gid], values["sweep"])
             for point, snap in zip(ends, snaps, strict=True):
                 if point:
                     constrain_snap(sketch, point, snap)
@@ -410,7 +580,10 @@ class SketchInteraction(QObject):
 
         ok = self.session.edit(f"Add {tool}", build)
         self.clicks = []
+        self._arc_dimensions.clear()
+        self.dimensions.clear()
         if ok and tool == "line" and (snaps[-1] is None or snaps[-1].kind == "reference"):
             end = self.session.sketch.point(new_end[0])
             self.clicks = [(end, SnapTarget(end, "point", new_end[0]))]
+            self.dimensions.begin(("length", "angle"))
         self.scene.set_preview([])

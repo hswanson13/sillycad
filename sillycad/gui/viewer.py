@@ -181,6 +181,7 @@ class Viewer(qtViewer3d):
         sketches: list[TopoDS_Shape],
         planes: bool = True,
         fit: bool = False,
+        threads: list[TopoDS_Shape] | None = None,
     ) -> None:
         """Replace what's on screen: the body, sketch wires, base planes and origin axes."""
         display = self._display
@@ -207,6 +208,9 @@ class Viewer(qtViewer3d):
             display.Context.Redisplay(body, False)
         for wires in sketches:
             display.DisplayShape(wires, color=SKETCH_COLOR, update=False)
+        for strokes in threads or []:
+            item = display.DisplayShape(strokes, color=_color(theme.VIEW_THREAD), update=False)[0]
+            display.Context.Deactivate(item)
         if fit:
             display.FitAll()
         display.SetSelectionModeFace()  # clicks pick faces (to sketch on)

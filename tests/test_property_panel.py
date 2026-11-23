@@ -35,10 +35,12 @@ class FakeViewer(QWidget):
         super().__init__(parent)
         self.shape = None
         self.fits: list[bool] = []
+        self.threads: list[object] = []
 
     def show_model(self, shape: object, *args: object, **kwargs: object) -> None:
         self.shape = shape
         self.fits.append(bool(kwargs.get("fit", args[2] if len(args) > 2 else False)))
+        self.threads = kwargs.get("threads", [])
 
     def set_navigation_mode(self, mode: str) -> None:
         pass
@@ -204,6 +206,7 @@ def test_hole_preview_edit_clearance_thread_and_history(window: MainWindow) -> N
     panel.thread.thread_class.setText("6H")
     panel.thread.left_hand.setChecked(True)
     assert not panel.message.text()
+    assert len(window.viewer.threads) == 1
     panel.ok.click()
     hole = window.doc.find("f4")
     assert isinstance(hole, Hole)
@@ -211,7 +214,9 @@ def test_hole_preview_edit_clearance_thread_and_history(window: MainWindow) -> N
     assert hole.thread.thread_class == "6H" and hole.thread.left_hand
     window.undo_stack.undo()
     assert window.doc.find("f4") is None
+    assert window.viewer.threads == []
     window.undo_stack.redo()
+    assert len(window.viewer.threads) == 1
     window.edit_feature("f4")
     panel = window._feature_panel
     assert isinstance(panel, HolePanel)

@@ -84,6 +84,18 @@ def test_reopened_sketch_still_solves(tmp_path) -> None:
     assert math.dist(*sketch.line_points("l3")) == approx(50)
 
 
+def test_arc_sweep_dimension_round_trips(tmp_path) -> None:
+    sketch = Sketch()
+    arc = sketch.add_arc(0, 0, 10, 0, 0, 10)
+    sketch.add_constraint("arc_angle", [arc], 90)
+    doc = Document([SketchFeature("f1", "Arc", sketch=sketch)], 2)
+    path = tmp_path / "arc.sillycad"
+    save(doc, path)
+    restored = load(path).sketches()[0].sketch
+    assert solve(restored).ok
+    assert restored.measure("arc_angle", [arc]) == approx(90)
+
+
 def test_newer_or_broken_files_are_refused_politely(tmp_path) -> None:
     path = tmp_path / "x.sillycad"
     path.write_text(json.dumps({"format_version": FORMAT_VERSION + 1, "features": []}))

@@ -25,6 +25,7 @@ from sillycad.gui.marking_menu import MarkingMenu
 from sillycad.gui.sketch_interaction import SketchInteraction
 from sillycad.gui.sketch_scene import SketchScene
 from sillycad.gui.sketch_session import SketchSession
+from sillycad.gui.thread_visual import thread_linework
 from sillycad.gui.tooltips import tooltip
 from sillycad.sketch_math import dimension_anchor
 
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
 _TOOLS = {
     "select": ("Select", "", "Select and drag sketch geometry"),
     "line": ("Line", "L", "Draw connected line segments"),
-    "rectangle": ("Rectangle", "", "Drag between opposite corners"),
+    "rectangle": ("Rectangle", "", "Click opposite corners or drag; type dimensions"),
     "circle": ("Circle", "C", "Draw a circle by center and radius"),
     "arc": ("Arc", "A", "Draw an arc by center, start and end"),
     "point": ("Point", "P", "Place a sketch point"),
@@ -56,6 +57,7 @@ _DIMENSIONS = {
     "distance_x": "Shift+H",
     "distance_y": "Shift+V",
     "angle": "Shift+A",
+    "arc_angle": "",
     "radius": "R",
     "diameter": "Shift+D",
 }
@@ -76,7 +78,9 @@ class SketchMode(QObject):
         self.actions: dict[str, QAction] = {}
         self._navigation_connections = []
         self._dimension_input: DimensionInput | None = None
-        window.viewer.show_model(window.model.shape, [], planes=False)
+        window.viewer.show_model(
+            window.model.shape, [], planes=False, threads=thread_linework(window.doc, window.model)
+        )
         self.scene = SketchScene(window.viewer, self.session, feature.placement(), feature.offset)
         window.viewer.camera_changed.connect(self.scene.update_grid)
         self.interaction = SketchInteraction(self.scene, self)
@@ -89,6 +93,7 @@ class SketchMode(QObject):
         self.interaction.edit_dimension.connect(self._edit_dimension)
         self.interaction.marking_menu.connect(self._marking_menu)
         self.interaction.tool_changed.connect(self._tool_changed)
+        self.interaction.finish_requested.connect(self.actions["finish"].trigger)
         window.undo_group.addStack(self.session.undo_stack)
         window.undo_group.setActiveStack(self.session.undo_stack)
         for key in (

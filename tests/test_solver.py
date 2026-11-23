@@ -103,6 +103,21 @@ def test_angle_is_in_degrees() -> None:
     assert math.degrees(math.atan2(y2 - y1, x2 - x1)) == approx(30)
 
 
+def test_arc_sweep_dimension_is_editable() -> None:
+    s = Sketch()
+    arc = s.add_arc(0, 0, 10, 0, 0, 10)
+    dimension = s.add_constraint("arc_angle", [arc], 90)
+    assert solve(s).ok
+    s.set_value(dimension, 120)
+    assert solve(s).ok
+    assert s.measure("arc_angle", [arc]) == approx(120)
+    with pytest.raises(ValueError):
+        s.set_value(dimension, 360)
+    circle = s.add_circle(20, 20, 3)
+    with pytest.raises(ValueError, match="needs an arc"):
+        s.add_constraint("arc_angle", [circle], 90)
+
+
 def test_line_tangent_to_arc() -> None:
     s = Sketch()
     line = s.add_line(0, 0, 10, 0.5)

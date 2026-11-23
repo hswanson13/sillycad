@@ -90,6 +90,7 @@ class MarkingMenu(QMenu):
                 "distance_x",
                 "distance_y",
                 "angle",
+                "arc_angle",
                 "radius",
                 "diameter",
             ):

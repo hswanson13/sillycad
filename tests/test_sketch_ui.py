@@ -73,6 +73,7 @@ class FakeInteraction(QObject):
     edit_dimension = Signal(str)
     marking_menu = Signal(QPoint)
     tool_changed = Signal(str)
+    finish_requested = Signal()
 
     def __init__(self, scene: FakeScene, parent: QObject) -> None:
         super().__init__(parent)

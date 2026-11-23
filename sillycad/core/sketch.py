@@ -104,15 +104,17 @@ RULES: dict[str, tuple[str, list[tuple[str, ...]]]] = {
     "distance_x": ("a line or two points", [("line",), ("point", "point")]),
     "distance_y": ("a line or two points", [("line",), ("point", "point")]),
     "angle": ("two lines", [("line", "line")]),
+    "arc_angle": ("an arc", [("round",)]),
     "radius": ("a circle or arc", [("round",)]),
     "diameter": ("a circle or arc", [("round",)]),
 }
-DIMENSIONS = {"distance", "distance_x", "distance_y", "angle", "radius", "diameter"}
+DIMENSIONS = {"distance", "distance_x", "distance_y", "angle", "arc_angle", "radius", "diameter"}
 _TYPE_ORDER = {"point": 0, "line": 1, "round": 2}
 _LABELS = {
     "distance_x": "Horizontal distance",
     "distance_y": "Vertical distance",
     "point_on_line": "Point on line",
+    "arc_angle": "Arc sweep",
 }
 
 XY = tuple[float, float]
@@ -292,6 +294,16 @@ class Sketch:
             cross = da[0] * db[1] - da[1] * db[0]
             dot = da[0] * db[0] + da[1] * db[1]
             return math.degrees(math.atan2(cross, dot))
+        if kind == "arc_angle":
+            arc = self.geo[refs[0]]
+            if not isinstance(arc, Arc):
+                raise ValueError("Arc sweep needs an arc.")
+            cx, cy = self.point(arc.center)
+            sx, sy = self.point(arc.start)
+            ex, ey = self.point(arc.end)
+            return math.degrees(
+                (math.atan2(ey - cy, ex - cx) - math.atan2(sy - cy, sx - cx)) % math.tau
+            )
         if kind == "radius":
             return self.radius(refs[0])
         if kind == "diameter":
@@ -310,6 +322,8 @@ class Sketch:
             raise ValueError(str(exc)) from None
         if tuple(self.ref_type(r) for r in ordered) not in signatures:
             raise ValueError(f"{name} needs {need}.")
+        if kind == "arc_angle" and not isinstance(self.geo.get(ordered[0]), Arc):
+            raise ValueError("Arc sweep needs an arc.")
         if all(r in REFERENCES for r in refs):
             raise ValueError(f"{name} needs at least one sketch item, not just the origin/axes.")
         segment_use = kind in ("equal", "midpoint") or (kind in DIMENSIONS and len(refs) == 1)
@@ -336,6 +350,8 @@ def check_value(kind: str, value: float) -> None:
         raise ValueError("Please enter a number.")
     if kind in ("distance", "radius", "diameter") and value <= 0:
         raise ValueError(f"{label(kind)} must be greater than zero.")
+    if kind == "arc_angle" and not 0 < value < 360:
+        raise ValueError("Arc sweep must be greater than 0° and less than 360°.")
 
 
 def _point_line_distance(p: XY, a: XY, b: XY) -> float:

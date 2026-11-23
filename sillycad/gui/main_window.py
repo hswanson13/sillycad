@@ -67,6 +67,7 @@ from sillycad.gui.navigation import NavigationBar
 from sillycad.gui.property_panel import FeaturePanel
 from sillycad.gui.ribbon import Ribbon
 from sillycad.gui.sketch_mode import SketchMode
+from sillycad.gui.thread_visual import thread_linework
 from sillycad.gui.tooltips import tooltip
 from sillycad.gui.viewer import Viewer
 
@@ -459,7 +460,9 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar().showMessage("Ready")
 
-    def update_view(self, fit: bool = False, model: Model | None = None) -> None:
+    def update_view(
+        self, fit: bool = False, model: Model | None = None, doc: Document | None = None
+    ) -> None:
         """Redraw the 3D view (optionally for a preview model)."""
         if model is None and self._feature_panel is not None:
             self._preview(self._feature_panel.feature)
@@ -472,7 +475,10 @@ class MainWindow(QMainWindow):
                     wires.append(sketch.wires())
                 except Exception:  # one broken sketch shouldn't hide the rest
                     log.exception("Could not draw %s", sketch.name)
-        self.viewer.show_model(model.shape, wires, self.show_planes.isChecked(), fit)
+        threads = thread_linework(doc or self.doc, model)
+        self.viewer.show_model(
+            model.shape, wires, self.show_planes.isChecked(), fit, threads=threads
+        )
         self.picked_face = None  # redrawing clears the 3D selection
         if self.tree.current_plane() != self.picked_plane:
             self.picked_plane = None
@@ -536,7 +542,7 @@ class MainWindow(QMainWindow):
             trial.features.append(feature)
         model = recompute(trial)
         fit = self.model.shape is None and model.shape is not None and not self._preview_fitted
-        self.update_view(fit=fit, model=model)
+        self.update_view(fit=fit, model=model, doc=trial)
         self._preview_fitted |= fit
         return model.errors.get(feature.id)
 

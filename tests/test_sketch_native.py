@@ -2,6 +2,7 @@
 
 import math
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -16,8 +17,9 @@ from PySide6.QtWidgets import QApplication, QDialog, QFileDialog
 from sillycad.core.document import Document
 from sillycad.core.features import Hole, Pad, Pocket, Revolve, SketchFeature
 from sillycad.core.fileio import load, save
-from sillycad.core.geometry import face_placement, volume
+from sillycad.core.geometry import Placement, face_placement, volume
 from sillycad.core.sketch import ORIGIN, Arc, Circle, Line, Point, Sketch
+from sillycad.core.threads import ThreadSpec
 from sillycad.gui import theme
 from sillycad.gui.hole_panel import HolePanel
 from sillycad.gui.main_window import UI_FONTS, MainWindow
@@ -501,6 +503,8 @@ def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         exercise_line_inference(window, tmp_path)
         exercise_hole_panel(window, tmp_path, app)
         exercise_click_hole_placement(window, tmp_path)
+        exercise_cosmetic_thread_display(window, tmp_path)
+        exercise_live_drawing_dimensions(window, tmp_path)
     finally:
         if window._sketch_mode is not None:
             window._sketch_mode.session.undo_stack.setClean()
@@ -709,6 +713,233 @@ def exercise_click_hole_placement(window: MainWindow, tmp_path: Path) -> None:
     assert not panel.ok.isEnabled()
     panel.cancel.click()
     assert len(window.doc.features) == 2
+
+
+def exercise_cosmetic_thread_display(window: MainWindow, tmp_path: Path) -> None:
+    """Verify thread metadata changes native viewport pixels without changing the solid."""
+    base = Sketch()
+    add_rectangle(base, (0, 0), (60, 40))
+    hole = Hole(
+        "f3",
+        "Hole",
+        "",
+        diameter=5,
+        through_all=True,
+        style="countersink",
+        face=Placement((0, 0, 10), (0, 0, 1), (1, 0, 0)),
+        center=(30, 20),
+        thread=ThreadSpec("ISO metric", "M6 x 1"),
+    )
+    doc = Document([SketchFeature("f1", "Base", sketch=base), Pad("f2", "Block", "f1"), hole], 4)
+    window._set_document(doc, None)
+    window.viewer.set_view("iso")
+    assert not window.model.errors
+    before = volume(window.model.shape)
+    threaded = tmp_path / "threaded.png"
+    assert window.viewer._display.View.Dump(str(threaded))
+    window._set_document(
+        Document([doc.features[0], doc.features[1], replace(hole, thread=None)], 4), None
+    )
+    window.viewer.set_view("iso")
+    plain = tmp_path / "unthreaded.png"
+    assert window.viewer._display.View.Dump(str(plain))
+    assert volume(window.model.shape) == pytest.approx(before)
+    a, b = QImage(str(threaded)), QImage(str(plain))
+    sx, sy = window.viewer._display.View.Convert(30.0, 20.0, 10.0)
+    changed = sum(
+        a.pixel(x, y) != b.pixel(x, y)
+        for y in range(max(0, sy - 80), min(a.height(), sy + 80))
+        for x in range(max(0, sx - 80), min(a.width(), sx + 80))
+    )
+    assert changed > 30
+
+    def sketch_view(document: Document, filename: str) -> QImage:
+        window._set_document(document, None)
+        window._start_sketch("XY", 10, None)
+        QTest.qWait(550)
+        window.viewer.stop_camera_animation()
+        path = tmp_path / filename
+        assert window.viewer._display.View.Dump(str(path))
+        window._sketch_mode.actions["finish"].trigger()
+        return QImage(str(path))
+
+    threaded_sketch = sketch_view(
+        Document([doc.features[0], doc.features[1], hole], 4), "threaded-sketch.png"
+    )
+    plain_sketch = sketch_view(
+        Document([doc.features[0], doc.features[1], replace(hole, thread=None)], 4),
+        "unthreaded-sketch.png",
+    )
+    changed = sum(
+        threaded_sketch.pixel(x, y) != plain_sketch.pixel(x, y)
+        for y in range(threaded_sketch.height())
+        for x in range(threaded_sketch.width())
+    )
+    assert changed > 30
+
+
+def exercise_live_drawing_dimensions(window: MainWindow, tmp_path: Path) -> None:
+    """Create all drawing primitives with live dimension fields."""
+    window._set_document(Document(), None)
+    window._start_sketch("XY", 0, None)
+    QTest.qWait(550)
+    window.viewer.stop_camera_animation()
+    mode = window._sketch_mode
+    assert mode is not None
+
+    def pos(x: float, y: float) -> QPoint:
+        return mode.scene.screen((x, y)).toPoint()
+
+    def click(x: float, y: float) -> None:
+        QTest.mouseClick(window.viewer, Qt.MouseButton.LeftButton, pos=pos(x, y))
+
+    def move(x: float, y: float) -> None:
+        QTest.mouseMove(window.viewer, pos(x, y), delay=20)
+        QTest.qWait(60)
+
+    mode.actions["rectangle"].trigger()
+    click(-40, -30)
+    move(-20, -15)
+    assert not mode.session.sketch.geo
+    assert mode.interaction._rectangle is not None and mode.scene._preview
+    click(-20, -15)
+    assert len([g for g in mode.session.sketch.geo.values() if isinstance(g, Line)]) == 4
+    mode.session.undo_stack.undo()
+    assert not mode.session.sketch.geo
+
+    click(-40, -30)
+    move(-20, -15)
+    fields = mode.interaction.dimensions.fields
+    assert fields["width"].hasFocus()
+    QTest.keyClicks(fields["width"], "30")
+    QTest.keyClick(fields["width"], Qt.Key.Key_Tab)
+    assert fields["height"].hasFocus()
+    QTest.keyClicks(fields["height"], "20")
+    assert window.viewer._display.View.Dump(str(tmp_path / "live-rectangle-viewport.png"))
+    image = window.grab().toImage()
+    painter = QPainter(image)
+    painter.drawImage(
+        window.viewer.mapTo(window, window.viewer.rect().topLeft()),
+        QImage(str(tmp_path / "live-rectangle-viewport.png")),
+    )
+    for field in fields.values():
+        painter.drawPixmap(field.mapTo(window, QPoint()), field.grab())
+    painter.end()
+    assert image.save(str(tmp_path / "live-rectangle.png"))
+    QTest.keyClick(fields["height"], Qt.Key.Key_Return)
+    dimensions = [c.value for c in mode.session.sketch.constraints.values() if c.kind == "distance"]
+    assert sorted(dimensions) == pytest.approx([20, 30])
+    assert mode.session.result.ok
+    width = next(c for c in mode.session.sketch.constraints.values() if c.value == 30)
+    assert mode.session.change_dimension(width.id, 35)
+    assert mode.session.result.ok
+    assert mode.session.sketch.measure(width.kind, width.refs) == pytest.approx(35)
+    mode.session.undo_stack.undo()
+    mode.session.undo_stack.undo()
+    assert not mode.session.sketch.geo
+    mode.session.undo_stack.redo()
+    assert len(mode.session.sketch.geo) == 12
+
+    mode.actions["line"].trigger()
+    click(10, -20)
+    move(20, -25)
+    move(20, -19.5)
+    length_field = mode.interaction.dimensions.fields["length"]
+    assert mode.scene._preview_aligned
+    QTest.keyPress(length_field, Qt.Key.Key_Control)
+    assert not mode.scene._preview_aligned
+    QTest.keyRelease(length_field, Qt.Key.Key_Control)
+    assert mode.scene._preview_aligned
+    move(20, -10)
+    fields = mode.interaction.dimensions.fields
+    QTest.keyClicks(fields["length"], "12")
+    QTest.keyClick(fields["length"], Qt.Key.Key_Tab)
+    QTest.keyClicks(fields["angle"], "30")
+    QTest.keyClick(fields["angle"], Qt.Key.Key_Return)
+    assert mode.session.result.ok
+    assert any(
+        c.kind == "distance" and c.value == 12 for c in mode.session.sketch.constraints.values()
+    )
+    assert any(
+        c.kind == "angle" and c.value == 30 for c in mode.session.sketch.constraints.values()
+    )
+    chain_field = mode.interaction.dimensions.fields["length"]
+    QTest.keyClick(chain_field, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    assert not any(
+        c.kind == "angle" and c.value == 30 for c in mode.session.sketch.constraints.values()
+    )
+    window.actions["redo"].trigger()
+    assert any(
+        c.kind == "angle" and c.value == 30 for c in mode.session.sketch.constraints.values()
+    )
+
+    mode.actions["circle"].trigger()
+    click(20, 20)
+    move(27, 20)
+    field = mode.interaction.dimensions.fields["radius"]
+    QTest.keyClicks(field, "8")
+    QTest.keyClick(field, Qt.Key.Key_Return)
+    circle = next(g for g in mode.session.sketch.geo.values() if isinstance(g, Circle))
+    assert circle.radius == pytest.approx(8)
+    assert any(
+        c.kind == "radius" and c.value == 8 for c in mode.session.sketch.constraints.values()
+    )
+
+    mode.actions["arc"].trigger()
+    click(-15, 20)
+    move(-5, 20)
+    field = mode.interaction.dimensions.fields["radius"]
+    QTest.keyClicks(field, "6")
+    QTest.keyClick(field, Qt.Key.Key_Return)
+    move(-15, 26)
+    field = mode.interaction.dimensions.fields["sweep"]
+    QTest.keyClicks(field, "120")
+    QTest.keyClick(field, Qt.Key.Key_Return)
+    arc = next(g for g in mode.session.sketch.geo.values() if isinstance(g, Arc))
+    assert mode.session.sketch.radius(arc.id) == pytest.approx(6)
+    assert mode.session.sketch.measure("arc_angle", [arc.id]) == pytest.approx(120)
+    assert mode.session.result.ok
+    sweep = next(c for c in mode.session.sketch.constraints.values() if c.kind == "arc_angle")
+    mode._edit_dimension(sweep.id)
+    box = mode._dimension_input
+    assert box is not None
+    box.setText("150")
+    QTest.keyClick(box, Qt.Key.Key_Return)
+    assert mode.session.sketch.measure("arc_angle", [arc.id]) == pytest.approx(150)
+
+    mode.actions["rectangle"].trigger()
+    click(35, 25)
+    move(40, 30)
+    field = mode.interaction.dimensions.fields["width"]
+    QTest.keyClicks(field, "-2")
+    QTest.keyClick(field, Qt.Key.Key_Return)
+    assert "valid width" in window.statusBar().currentMessage()
+    QTest.keyClick(field, Qt.Key.Key_Escape)
+    assert mode.interaction._rectangle is None
+    click(-15, 45)
+    move(-25, 35)
+    field = mode.interaction.dimensions.fields["width"]
+    QTest.keyClicks(field, "12")
+    click(-30, 35)
+    assert mode.session.result.ok
+    assert any(
+        c.kind == "distance" and c.value == 12 for c in mode.session.sketch.constraints.values()
+    )
+    newest = [g for g in mode.session.sketch.geo.values() if isinstance(g, Line)][-4]
+    start, end = mode.session.sketch.line_points(newest.id)
+    assert end[0] < start[0] and start[0] - end[0] == pytest.approx(12)
+    click(35, 25)
+    field = mode.interaction.dimensions.fields["width"]
+    QTest.keyClick(field, Qt.Key.Key_C)
+    assert mode.interaction.tool == "circle"
+    click(35, 25)
+    field = mode.interaction.dimensions.fields["radius"]
+    QTest.keyClick(field, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
+    assert window._sketch_mode is None
+    path = tmp_path / "live-dimensions.sillycad"
+    save(window.doc, path)
+    reopened = load(path).sketches()[0].sketch
+    assert any(c.kind == "arc_angle" and c.value == 150 for c in reopened.constraints.values())
 
 
 def exercise_feature_panels(window: MainWindow) -> None:

@@ -165,17 +165,28 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 - [x] Green key-point dots now appear in Select mode as well as while drawing and placing holes. Interior sketch-line intersections can be snapped; drawing there adds two point-on-line constraints.
 - [x] Repositioning, Cancel, Apply, undo/redo, save/reopen, old-file migration, invalid placement, side faces, curved-face errors, and viewport navigation have regression coverage.
 - [x] Ruff passes. The full headless suite has 140 passed and one native test skipped; the expanded native-window test passes separately.
-- [ ] Comprehensive standards coverage, validated class-specific tolerances and fits, other clearance standards, external threads, multi-start/profile definitions, and viewport thread callouts/appearance.
+- [x] Threaded Holes and circular Cuts display illustrative, non-selectable strokes on surviving bore walls, including in live previews and sketch mode. They do not change the body or STL.
+- [ ] Comprehensive standards coverage, validated class-specific tolerances and fits, other clearance standards, external threads, multi-start/profile definitions, and viewport thread callouts.
 
 **Engineering limitation:** metadata is not helical geometry and does not appear in STL. Catalogs are selected subsets; class text, pipe entrance diameter, gauge, engagement, tap drills, and manufacturing fit are not validated. Verify dimensions against the governing standards. See README's **Holes and cosmetic threads** section for exact ranges and tapered-bore limitations.
 
-## ⬜ U8: Dimension entry while drawing
+## ✅ U8: Dimension entry while drawing
 
-- [ ] Show the applicable dimensions while drawing so the user can type values immediately and use Tab to move between available dimensions.
+- [x] Rectangle supports click–move–click as well as dragging; live width and height fields appear in the preview.
+- [x] Line offers length and angle, circle offers radius, and arc offers radius followed by sweep. Type immediately, use Tab to switch fields, Enter to confirm, or click the next point; Escape cancels. Typed values create editable constraints; unedited values do not.
+- [x] Arc sweep is an editable dimension in the solver and sketch UI. Format version 4 stores it; versions 1–3 still load.
+- [x] Ruff passes. The headless suite has 144 passed and one native test skipped; the expanded native-window test passes separately.
 
 ---
 
 ## How to try it
+
+### U8
+
+1. Start a sketch, choose **Rectangle**, click the first corner and move the mouse. Type a width, press `Tab`, type a height, then press `Enter` or click the second corner. The two dimensions can be double-clicked and edited after creation. You can also draw by two clicks or by dragging without typing.
+2. Try **Line**: type length, Tab to angle in degrees, and press Enter. Try **Circle**: type its radius. For **Arc**, click the center, type the radius and press Enter, then move toward the end, type its counter-clockwise sweep and press Enter.
+3. Use undo/redo, change tools, and press Escape to cancel an unfinished shape. Hold Ctrl while drawing a line to temporarily suppress horizontal/vertical inference. Fields pass mouse clicks to the canvas; use Tab to select them.
+4. Open a part with a cosmetic threaded Hole or circular Cut: the bore should show thread strokes in the 3D view and while sketching. The strokes are illustrative only; the exported STL is unchanged.
 
 ### U7 (in progress)
 

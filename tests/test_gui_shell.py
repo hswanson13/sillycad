@@ -50,7 +50,9 @@ class FakeViewer(QWidget):
         self.picking_plane = False
         self.looked_at: tuple[Placement, float] | None = None
 
-    def show_model(self, solid: object, sketches: list[object], planes: bool, fit: bool) -> None:
+    def show_model(
+        self, solid: object, sketches: list[object], planes: bool, fit: bool, **kwargs: object
+    ) -> None:
         self.planes = planes
 
     def set_view(self, name: str) -> None:

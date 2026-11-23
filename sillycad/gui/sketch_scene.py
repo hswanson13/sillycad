@@ -340,7 +340,7 @@ class SketchScene:
     def _dimension_lines(self, constraint: Constraint, anchor: XY) -> list[tuple[XY, XY]]:
         sketch = self.session.sketch
         refs = constraint.refs
-        if constraint.kind in ("radius", "diameter"):
+        if constraint.kind in ("radius", "diameter", "arc_angle"):
             curve = sketch.geo[refs[0]]
             if not isinstance(curve, Circle | Arc):
                 raise ValueError("A radius or diameter dimension needs a circle or arc.")
@@ -445,9 +445,12 @@ class SketchScene:
                 ):
                     display_color = theme.TEXT
                 value = f"{round(constraint.value, 3):g}"
-                text = {"angle": f"{value}°", "radius": f"R{value}", "diameter": f"⌀{value}"}.get(
-                    constraint.kind, value
-                )
+                text = {
+                    "angle": f"{value}°",
+                    "arc_angle": f"{value}°",
+                    "radius": f"R{value}",
+                    "diameter": f"⌀{value}",
+                }.get(constraint.kind, value)
                 lines_key = "dimension-lines:" + constraint.id
                 alive.add(lines_key)
                 self._auxiliary(lines_key, self._dimension_lines(constraint, anchor), display_color)

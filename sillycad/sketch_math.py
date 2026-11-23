@@ -201,7 +201,7 @@ def dimension_anchor(sketch: Sketch, constraint: Constraint, nudge: float) -> XY
         return (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
 
     refs = constraint.refs
-    if constraint.kind in ("radius", "diameter"):
+    if constraint.kind in ("radius", "diameter", "arc_angle"):
         curve = sketch.geo[refs[0]]
         if not isinstance(curve, Circle | Arc):
             raise ValueError("A radius or diameter dimension needs a circle or arc.")
