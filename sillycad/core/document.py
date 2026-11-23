@@ -21,16 +21,20 @@ from OCC.Core.TopoDS import TopoDS_Shape
 from sillycad.core.features import (
     Feature,
     FeatureError,
+    Hole,
     Pad,
     Pocket,
     Revolve,
     SketchFeature,
+    hole_shape,
     pad_shape,
     pocket_shape,
     revolve_shape,
+    validate_thread,
 )
-from sillycad.core.geometry import plane_axes
+from sillycad.core.geometry import plane_axes, volume
 from sillycad.core.profiles import ProfileError
+from sillycad.core.sketch import Arc, Circle, Line
 
 log = logging.getLogger(__name__)
 
@@ -114,15 +118,34 @@ def recompute(doc: Document) -> Model:
     return Model(shape, errors)
 
 
-def _apply(doc: Document, f: Pad | Pocket | Revolve, body: TopoDS_Shape | None) -> TopoDS_Shape:
+def _apply(
+    doc: Document, f: Pad | Pocket | Revolve | Hole, body: TopoDS_Shape | None
+) -> TopoDS_Shape:
     sk = doc.find(f.sketch_id)
     if not isinstance(sk, SketchFeature) or sk.id not in {s.id for s in doc.sketches(f.id)}:
         raise FeatureError("Its sketch is missing. Double-click to pick another one.")
-    if isinstance(f, Pocket):
+    if isinstance(f, Pocket | Hole):
         if body is None:
             raise FeatureError("Nothing to cut yet. The first solid must be a Pad or Revolve.")
-        tool = pocket_shape(f, sk, _through_all_length(body, sk))
-        return _clean(BRepAlgoAPI_Cut(body, tool).Shape())
+        through_length = _through_all_length(body, sk)
+        if isinstance(f, Hole):
+            tool = hole_shape(f, sk, through_length)
+        else:
+            if f.thread is not None:
+                curves = [
+                    g
+                    for g in sk.sketch.geo.values()
+                    if isinstance(g, Line | Arc | Circle) and not g.construction
+                ]
+                if len(curves) != 1 or not isinstance(curves[0], Circle):
+                    raise FeatureError("Threaded Pocket needs exactly one circular profile.")
+                depth = through_length if f.through_all else f.length
+                validate_thread(f.thread, 2 * curves[0].radius, depth, cylindrical=True)
+            tool = pocket_shape(f, sk, through_length)
+        result = _clean(BRepAlgoAPI_Cut(body, tool).Shape())
+        if isinstance(f, Hole) and volume(body) - volume(result) < 1e-8:
+            raise FeatureError("The hole does not intersect the body in this direction.")
+        return result
     tool = pad_shape(f, sk) if isinstance(f, Pad) else revolve_shape(f, sk)
     return _clean(tool if body is None else BRepAlgoAPI_Fuse(body, tool).Shape())
 

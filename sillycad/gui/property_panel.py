@@ -14,12 +14,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
-from sillycad.core.features import Pad, Pocket, Revolve, SketchFeature, SolidFeature
+from sillycad.core.features import Pad, Pocket, Revolve, SketchFeature
 from sillycad.core.sketch import Line
+from sillycad.gui.thread_editor import ThreadEditor
 from sillycad.gui.tooltips import tooltip
 
 
@@ -32,9 +34,9 @@ class FeaturePanel(QWidget):
 
     def __init__(
         self,
-        feature: SolidFeature,
+        feature: Pad | Pocket | Revolve,
         sketches: list[SketchFeature],
-        preview: Callable[[SolidFeature], str | None],
+        preview: Callable[[Pad | Pocket | Revolve], str | None],
         *,
         editing: bool = False,
         parent: QWidget | None = None,
@@ -119,6 +121,12 @@ class FeaturePanel(QWidget):
                 "through_all" if isinstance(feature, Pocket) and feature.through_all else "distance"
             )
             self._extrude_choices(direction_value, extent_value)
+            self.thread = ThreadEditor(feature.thread if isinstance(feature, Pocket) else None)
+            thread_scroll = QScrollArea()
+            thread_scroll.setWidgetResizable(True)
+            thread_scroll.setMaximumHeight(180)
+            thread_scroll.setWidget(self.thread)
+            layout.addWidget(thread_scroll)
         else:
             axis_group = QGroupBox("Axis")
             form = QFormLayout(axis_group)
@@ -174,6 +182,7 @@ class FeaturePanel(QWidget):
             self.operations.buttonClicked.connect(self._operation_changed)
             self.direction.currentIndexChanged.connect(self._changed)
             self.length.valueChanged.connect(self._changed)
+            self.thread.changed.connect(self._changed)
         else:
             self.axis.currentIndexChanged.connect(self._changed)
             self.angle.valueChanged.connect(self._changed)
@@ -221,6 +230,7 @@ class FeaturePanel(QWidget):
         feature = self.feature
         sketch_id = self.sketch.currentData()
         if isinstance(feature, Pad | Pocket):
+            self.thread.setEnabled(self.cut.isChecked())
             direction = self.direction.currentData()
             if direction != "symmetric":
                 self._last_reversed = direction == "flipped"
@@ -242,6 +252,7 @@ class FeaturePanel(QWidget):
                     length=self.length.value(),
                     through_all=self.extent.currentData() == "through_all",
                     reversed=self._last_reversed,
+                    thread=self.thread.value(),
                 )
         else:
             self._fill_axes(self.axis.currentData() or feature.axis)
@@ -256,7 +267,7 @@ class FeaturePanel(QWidget):
         error = self._preview(copy.deepcopy(self.feature))
         self.message.setText(f"⚠ {error}" if error else "")
 
-    def _current_feature(self) -> SolidFeature:
+    def _current_feature(self) -> Pad | Pocket | Revolve:
         if isinstance(self.feature, Pad | Pocket):
             self.length.interpretText()
         else:
@@ -270,7 +281,7 @@ class FeaturePanel(QWidget):
     def _apply(self) -> None:
         self.applied.emit(self._current_feature())
 
-    def next_feature(self, feature: SolidFeature) -> None:
+    def next_feature(self, feature: Pad | Pocket | Revolve) -> None:
         """Retain the settings while preparing a fresh feature after Apply."""
         self.feature = copy.deepcopy(feature)
         self.title.setText(feature.name)

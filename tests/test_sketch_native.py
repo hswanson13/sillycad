@@ -9,16 +9,17 @@ from OCC.Core.TopAbs import TopAbs_FACE
 from OCC.Core.TopExp import TopExp_Explorer
 from OCC.Core.TopoDS import topods
 from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QImage, QWheelEvent
+from PySide6.QtGui import QFont, QImage, QPainter, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog
 
 from sillycad.core.document import Document
-from sillycad.core.features import Pad, Pocket, Revolve, SketchFeature
+from sillycad.core.features import Hole, Pad, Pocket, Revolve, SketchFeature
 from sillycad.core.geometry import face_placement, volume
 from sillycad.core.sketch import ORIGIN, Arc, Circle, Line, Point, Sketch
 from sillycad.gui import theme
-from sillycad.gui.main_window import MainWindow
+from sillycad.gui.hole_panel import HolePanel
+from sillycad.gui.main_window import UI_FONTS, MainWindow
 from sillycad.sketch_math import add_rectangle
 
 pytestmark = pytest.mark.skipif(
@@ -37,6 +38,7 @@ def exercise_key_point_snapping(window: MainWindow, tmp_path: Path) -> None:
     )
     window._start_sketch("XY", 10, None)
     QTest.qWait(550)
+    window.viewer.stop_camera_animation()
     mode = window._sketch_mode
     assert mode is not None
     mode.session.edit("Reference line", lambda sketch: sketch.add_line(10, 15, 40, 15))
@@ -153,6 +155,7 @@ def exercise_line_inference(window: MainWindow, tmp_path: Path) -> None:
     )
     window._start_sketch("XY", 10, None)
     QTest.qWait(550)
+    window.viewer.stop_camera_animation()
     mode = window._sketch_mode
     assert mode is not None
 
@@ -406,6 +409,9 @@ def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         QTest.mouseMove(window.viewer, center + QPoint(30, 20), delay=20)
         QTest.mouseRelease(window.viewer, Qt.MouseButton.MiddleButton, pos=center + QPoint(30, 20))
         QTest.qWait(120)
+        window.activateWindow()
+        window.viewer.setFocus()
+        assert QTest.qWaitForWindowActive(window, 2000)
         QTest.keyClick(window.viewer, Qt.Key.Key_F5)
         QTest.qWait(550)
         normal = mode.feature.placement().normal
@@ -472,6 +478,7 @@ def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         exercise_drawing_tools(window)
         exercise_key_point_snapping(window, tmp_path)
         exercise_line_inference(window, tmp_path)
+        exercise_hole_panel(window, tmp_path, app)
     finally:
         if window._sketch_mode is not None:
             window._sketch_mode.session.undo_stack.setClean()
@@ -479,6 +486,56 @@ def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         window.undo_stack.setClean()
         window.close()
         app.processEvents()
+
+
+def exercise_hole_panel(window: MainWindow, tmp_path: Path, app: QApplication) -> None:
+    """Exercise a hole preview using the existing native OCCT window."""
+    font = QFont()
+    font.setFamilies(UI_FONTS)
+    font.setStyleHint(QFont.StyleHint.Cursive)
+    app.setFont(font)
+    app.setStyle("Fusion")
+    app.setStyleSheet(theme.STYLESHEET)
+    window.resize(1400, 1000)
+    base = Sketch()
+    add_rectangle(base, (0, 0), (60, 40))
+    centers = Sketch()
+    point = centers.add_point(30, 20)
+    window._set_document(
+        Document(
+            [
+                SketchFeature("f1", "Base", sketch=base),
+                Pad("f2", "Block", "f1"),
+                SketchFeature("f3", "Centers", "XY", 10, centers),
+            ],
+            4,
+        ),
+        None,
+    )
+    if window.actions["planes"].isChecked():
+        window.actions["planes"].trigger()
+    window.viewer.set_view("iso")
+    window.actions["hole"].trigger()
+    panel = window._feature_panel
+    assert isinstance(panel, HolePanel)
+    panel.point.setCurrentIndex(panel.point.findData(point))
+    panel.style.setCurrentIndex(panel.style.findData("counterbore"))
+    panel.thread.setChecked(True)
+    panel.diameter.setValue(5)
+    QTest.qWait(150)
+    assert not panel.message.text()
+    viewport_path = tmp_path / "u7-viewport.png"
+    assert window.viewer._display.View.Dump(str(viewport_path))
+    viewport = QImage(str(viewport_path))
+    image = window.grab().toImage()
+    painter = QPainter(image)
+    painter.drawImage(window.viewer.mapTo(window, window.viewer.rect().topLeft()), viewport)
+    painter.end()
+    assert image.save(str(tmp_path / "u7-window-composite.png"))
+    panel.ok.click()
+    assert isinstance(window.doc.find("f4"), Hole)
+    assert not window.model.errors
+    assert volume(window.model.shape) < 24000
 
 
 def exercise_feature_panels(window: MainWindow) -> None:

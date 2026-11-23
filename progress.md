@@ -2,9 +2,9 @@
 
 # SillyCAD Progress
 
-**Where we are:** 🎉 M1–M5, sketching on faces, and U1–U6 are done. The headless suite has 104 passing tests; the additional native-window test passes when enabled. U7 (holes and threads) is next.
+**Where we are:** 🎉 M1–M5, sketching on faces, and U1–U6 are done. U7 holes and partial cosmetic thread support are implemented; comprehensive threading remains in progress. The headless suite has 123 passing tests; the native-window integration test passes separately.
 
-**Needs you:** try the U6 workflow below and confirm before starting U7.
+**Needs you:** try the U7 workflow below and review the threading limitations before relying on it for a design.
 
 Legend: ✅ done · 🔨 in progress · ⬜ not started
 
@@ -153,13 +153,25 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 - [x] The same inference follows sketch axes on face sketches, including after orbiting. Undo / redo cancels an unfinished chain so it cannot retain a deleted endpoint.
 - [x] Ruff passes. The headless suite has 104 passed and one native-window test skipped; that native test passes separately and covers preview rendering, constraints, key-point precedence, undo / redo and sketches on top and side faces.
 
-## ⬜ U7: Holes and threads
+## 🔨 U7: Holes and threads
 
-**You'll be able to:** create ordinary and threaded holes after confirming the standards and thread representation. Core and file-format changes are approved for this milestone.
+**You can now:** create holes at sketch points and record cosmetic internal-thread metadata. Core and version-2 file-format changes were approved; version-1 files still load.
+
+- [x] Simple blind/through holes, counterbore, spotface, and countersink; selected ISO 273 metric clearance presets.
+- [x] Cosmetic metadata for selected ISO metric, UNC/UNF/UNEF, NPT/NPTF, BSPP/BSPT, Tr and ACME sizes, plus custom size/pitch/taper; class text, handedness and depth persist through save, undo and edit.
+- [x] Tapered simple bores are geometric cones; a cylindrical Pocket cannot be marked as a tapered thread. Existing single-circle Cuts can carry parallel-thread metadata with a rough diameter check.
+- [x] Live preview, Property Panel, ribbon and marking menu, browser, undo/redo, and version-1 loading. Headless volume, invalid-input, migration and GUI tests plus an opt-in native-window test.
+- [ ] Comprehensive standards coverage, validated class-specific tolerances and fits, other clearance standards, external threads, multi-start/profile definitions, and viewport thread callouts/appearance.
+
+**Engineering limitation:** metadata is not helical geometry and does not appear in STL. Catalogs are selected subsets; class text, pipe entrance diameter, gauge, engagement, tap drills, and manufacturing fit are not validated. Verify dimensions against the governing standards. See README's **Holes and cosmetic threads** section for exact ranges and tapered-bore limitations.
 
 ---
 
 ## How to try it
+
+### U7 (in progress)
+
+Make a block, sketch a point on its top face, finish the sketch, and choose **Hole**. Select the point, choose a hole style and depth, and optionally enable **Cosmetic thread**; for M6 x 1, use a 5 mm bore as an example. Check the preview and commit, then double-click the hole to edit and try undo/redo. To try clearance, turn the thread off and choose ISO 273 M6 / Medium (6.6 mm). For a Cut made from one circle, double-click the Cut and enable the cosmetic thread controls.
 
 ### U6
 

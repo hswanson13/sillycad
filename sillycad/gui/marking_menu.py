@@ -99,6 +99,7 @@ class MarkingMenu(QMenu):
             "sketch_offset",
             "pad",
             "pocket",
+            "hole",
             "sketches",
             "shaded",
             "wireframe",

@@ -1,4 +1,4 @@
-"""Features of the parametric history: Sketch, Pad, Pocket and Revolve.
+"""Features of the parametric history: Sketch, Pad, Pocket, Revolve and Hole.
 
 Features are plain data (dataclasses with stable IDs). ``document.recompute``
 turns them into a solid. Lengths are mm and angles degrees; radians only at
@@ -11,8 +11,13 @@ from dataclasses import dataclass, field
 from OCC.Core.BRep import BRep_Builder
 from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Fuse
 from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Transform
-from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakePrism, BRepPrimAPI_MakeRevol
-from OCC.Core.gp import gp_Ax1, gp_Dir, gp_Pnt, gp_Trsf, gp_Vec
+from OCC.Core.BRepPrimAPI import (
+    BRepPrimAPI_MakeCone,
+    BRepPrimAPI_MakeCylinder,
+    BRepPrimAPI_MakePrism,
+    BRepPrimAPI_MakeRevol,
+)
+from OCC.Core.gp import gp_Ax1, gp_Ax2, gp_Dir, gp_Pnt, gp_Trsf, gp_Vec
 from OCC.Core.TopoDS import TopoDS_Compound, TopoDS_Face, TopoDS_Shape
 
 from sillycad.core.constants import POINT_TOLERANCE
@@ -24,7 +29,8 @@ from sillycad.core.geometry import (
     plane_trsf,
 )
 from sillycad.core.profiles import curve_edge, find_profiles
-from sillycad.core.sketch import X_AXIS, XY, Y_AXIS, Arc, Circle, Line, Sketch
+from sillycad.core.sketch import ORIGIN, X_AXIS, XY, Y_AXIS, Arc, Circle, Line, Point, Sketch
+from sillycad.core.threads import ThreadSpec, clearance_diameter, resolve_thread
 
 
 class FeatureError(Exception):
@@ -113,6 +119,28 @@ class Pocket:
     length: float = 5.0
     through_all: bool = False
     reversed: bool = False
+    thread: ThreadSpec | None = None
+
+
+@dataclass
+class Hole:
+    """A hole located at a sketch point, with optional cosmetic thread metadata."""
+
+    id: str
+    name: str
+    sketch_id: str
+    point_id: str = ORIGIN
+    diameter: float = 6.0
+    length: float = 5.0
+    through_all: bool = False
+    reversed: bool = False
+    style: str = "simple"
+    head_diameter: float = 10.0
+    head_depth: float = 2.0
+    countersink_angle: float = 90.0
+    clearance_size: str = ""
+    clearance_fit: str = "medium"
+    thread: ThreadSpec | None = None
 
 
 @dataclass
@@ -129,8 +157,81 @@ class Revolve:
     angle: float = 360.0
 
 
-Feature = SketchFeature | Pad | Pocket | Revolve
-SolidFeature = Pad | Pocket | Revolve
+Feature = SketchFeature | Pad | Pocket | Revolve | Hole
+SolidFeature = Pad | Pocket | Revolve | Hole
+
+
+def validate_thread(thread: ThreadSpec, bore: float, length: float, *, cylindrical: bool) -> float:
+    """Validate metadata and return the diametral taper, without certifying a fit."""
+    try:
+        size = resolve_thread(thread)
+    except ValueError as exc:
+        raise FeatureError(str(exc)) from exc
+    if thread.depth is not None and thread.depth > length + POINT_TOLERANCE:
+        raise FeatureError("Thread depth cannot exceed the hole depth.")
+    if cylindrical and size.taper:
+        raise FeatureError("A tapered thread needs a tapered Hole, not a cylindrical Pocket.")
+    if size.major is not None and not size.major - 2 * size.pitch < bore <= size.major:
+        raise FeatureError("Bore diameter is incompatible with the nominal thread size and pitch.")
+    return size.taper
+
+
+def hole_shape(hole: Hole, sk: SketchFeature, through_all_length: float) -> TopoDS_Shape:
+    """Build the material removed by a hole, in the sketch's frame."""
+    if hole.point_id != ORIGIN and not isinstance(sk.sketch.geo.get(hole.point_id), Point):
+        raise FeatureError("The hole center point is missing. Pick another sketch point.")
+    x, y = sk.sketch.point(hole.point_id)
+    if not all(math.isfinite(v) for v in (x, y, hole.diameter, hole.length)):
+        raise FeatureError("Hole dimensions and center must be finite.")
+    length = through_all_length if hole.through_all else hole.length
+    _check_length(length)
+    diameter = hole.diameter
+    if hole.clearance_size:
+        if hole.thread:
+            raise FeatureError("A clearance hole cannot also be threaded.")
+        try:
+            diameter = clearance_diameter(hole.clearance_size, hole.clearance_fit)
+        except ValueError as exc:
+            raise FeatureError(str(exc)) from exc
+    if diameter <= 0:
+        raise FeatureError("Hole diameter must be greater than zero.")
+    if hole.style not in ("simple", "counterbore", "spotface", "countersink"):
+        raise FeatureError("Unknown hole style.")
+    axis = gp_Ax2(gp_Pnt(x, y, 0), gp_Dir(0, 0, 1 if hole.reversed else -1))
+    radius = diameter / 2
+    tool_radius = radius
+    tools = []
+    head_depth = 0.0
+    if hole.style != "simple":
+        if not math.isfinite(hole.head_diameter) or hole.head_diameter <= diameter:
+            raise FeatureError("Head diameter must be greater than the hole diameter.")
+        head_radius = hole.head_diameter / 2
+        if hole.style in ("counterbore", "spotface"):
+            head_depth = hole.head_depth
+            if not math.isfinite(head_depth) or not 0 < head_depth < length:
+                raise FeatureError("Head depth must be positive and less than the hole depth.")
+            tools.append(BRepPrimAPI_MakeCylinder(axis, head_radius, head_depth).Shape())
+        else:
+            if not math.isfinite(hole.countersink_angle) or not 0 < hole.countersink_angle < 180:
+                raise FeatureError("Countersink angle must be between 0 and 180 degrees.")
+            head_depth = (head_radius - radius) / math.tan(math.radians(hole.countersink_angle / 2))
+            if head_depth >= length:
+                raise FeatureError("Countersink depth must be less than the hole depth.")
+            tools.append(BRepPrimAPI_MakeCone(axis, head_radius, radius, head_depth).Shape())
+    if hole.thread is not None:
+        taper = validate_thread(hole.thread, diameter, length - head_depth, cylindrical=False)
+        if taper:
+            thread_depth = hole.thread.depth
+            if thread_depth is None:
+                raise FeatureError("A tapered thread requires an explicit thread depth.")
+            if hole.style != "simple":
+                raise FeatureError("Tapered threads currently require a simple hole.")
+            tool_radius = (diameter - taper * thread_depth) / 2
+            if tool_radius <= 0:
+                raise FeatureError("The tapered bore closes before the thread depth.")
+            tools.append(BRepPrimAPI_MakeCone(axis, radius, tool_radius, thread_depth).Shape())
+    tools.append(BRepPrimAPI_MakeCylinder(axis, tool_radius, length).Shape())
+    return place_on_plane(fuse_all(tools), sk.placement(), sk.offset)
 
 
 def pad_shape(pad: Pad, sk: SketchFeature) -> TopoDS_Shape:

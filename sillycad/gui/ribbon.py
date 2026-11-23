@@ -89,7 +89,14 @@ class Ribbon(QWidget):
             _page(
                 [
                     ("Sketch", [sketch_button]),
-                    ("Create", [self.extrude_button, _button(actions["revolve"], large=True)]),
+                    (
+                        "Create",
+                        [
+                            self.extrude_button,
+                            _button(actions["revolve"], large=True),
+                            _button(actions["hole"], large=True),
+                        ],
+                    ),
                     ("Work Features", [_button(actions["planes"], large=True)]),
                 ]
             )

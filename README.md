@@ -50,7 +50,7 @@ Open a file directly with `python -m sillycad part.sillycad`.
 | Front / Top / Right / Home view | `1` / `2` / `3` / `0` or `F6` |
 | Zoom All | `F` / `Home` |
 
-Use **File** for document commands and the Quick Access Toolbar for common file commands and undo/redo. The **3D Model** ribbon has Start 2D Sketch, Extrude (Join or Cut), Revolve, and plane visibility; **View** has display, visibility, and navigation controls.
+Use **File** for document commands and the Quick Access Toolbar for common file commands and undo/redo. The **3D Model** ribbon has Start 2D Sketch, Extrude (Join or Cut), Revolve, Hole, and plane visibility; **View** has display, visibility, and navigation controls.
 
 **Extrude and Revolve**
 
@@ -62,6 +62,18 @@ Select a sketch in the browser or start **Extrude** (`E`) or **Revolve** (`R`); 
 - Preview errors appear in the panel. As before, accepting a failed feature keeps it in the browser with a red error badge so it can be edited. The last valid body remains visible.
 
 While a Property Panel is open, Undo first cancels the active panel; the next Undo changes document history. Redo closes the panel and redoes the next history step. File and other feature commands are available again after the panel closes.
+
+**Holes and cosmetic threads**
+
+To try a hole, create a solid, select a flat face, start a sketch on it, and place a **Point** where the hole should go. Finish the sketch, choose **Hole** on the 3D Model ribbon, and select that sketch and point under Placement. The sketch origin and points belonging to other geometry can also be selected. Choose the diameter, **Distance** or **Through All**, direction, and a simple, counterbore, spotface, or countersink style. Head dimensions and countersink included angle are entered explicitly. Select a listed ISO 273 fastener size and fine/medium/coarse fit to use its clearance diameter instead of a custom diameter. A clearance hole cannot also be threaded. Preview errors appear in the panel; OK, Cancel, Apply, undo/redo, and browser editing work as for other features.
+
+Check **Cosmetic thread** to record a thread family, size, optional class text, handedness, and full or specified depth. For a recessed hole, the thread depth starts below the counterbore, spotface, or countersink. For example, choose **ISO metric → M6 x 1**, enter a 5 mm hole diameter, and optionally enter `6H` as the class. The diameter is not chosen automatically: use the appropriate bore for your design. To add metadata to an existing circular Cut, double-click the Cut in the browser and enable Cosmetic thread in its panel; its sketch must contain exactly one non-construction circle and no other non-construction curves.
+
+**Important limitations:** this is a partial thread implementation, not comprehensive modern-CAD threading. Threads are metadata only: there is no helical geometry, thread texture or viewport callout, and STL contains only the bore. Thread classes are unvalidated text; the diameter check is only a rough compatibility check, not a tolerance or tap-drill calculation. The catalog contains selected sizes, not complete standards: ISO metric M1–M64; selected UNC/UNF/UNEF up to 1 inch; NPT/NPTF 1/16–2 inch; selected BSPP/BSPT 1/16–6 inch; six Tr and three ACME sizes. ISO 273 clearance presets cover M3–M16 selected sizes; inch clearances must be entered manually. A Custom thread stores a name, major diameter, pitch, and diametral taper, but not a full thread profile or multi-start definition. External threads, modeled threads, class-specific tolerances, tap-drill recommendations, and a complete standard catalog are not implemented.
+
+NPT, NPTF, BSPT and tapered custom threads require a **simple Hole** with an explicit thread depth and user-specified entrance diameter. The bore tapers by the selected diametral taper for that depth and continues cylindrically at the smaller diameter. Pipe nominal sizes are not bore diameters; pipe entrance diameter and gauge-plane, engagement, sealing, and class requirements are **not verified**. A tapered thread cannot be attached to a cylindrical Cut. Through-all thread depth is checked against the cutter length, not measured material thickness. Verify all thread and clearance choices against the current governing standards and manufacturing requirements.
+
+Reference data: [ISO 261 metric size table](https://www.radii.com.mx/en/tools/reference-tables/iso-261-metric-threads), [UNC/UNF table](https://www.engineeringtoolbox.com/unified-screw-threads-unc-unf-d_1809.html), [UNEF table](https://threadspec.org/unef/), [NPT dimensions](https://amesweb.info/Screws/NPT-Thread-Chart.aspx), [NPTF sizes](https://pipingtechs.com/nptf-thread-size-chart-dimensions-tpi-thread-guide/), [BSP dimensions](https://www.raipurhydraulics.com/resources/bsp-thread-chart), [Tr dimensions](https://www.roymech.co.uk/Useful_Tables/Screws/Trapezoidal.html), [ACME dimensions](https://www.radii.com.mx/en/tools/reference-tables/acme-threads), and [ISO 273 clearance examples](https://isocnc.com/resources/clearance-hole-chart/).
 
 Click **Start 2D Sketch**, then pick a visible base plane or flat face in the viewport, or a plane under **Origin** in the Model browser. Alternatively, select the plane or face first, then start the sketch. The sketch opens in the main viewport with the part behind it; a face outline appears as a snappable guide. To specify an offset, use **Sketch with Offset…** from the Start 2D Sketch dropdown or a browser plane's context menu. The Origin eye hides or shows the planes and axes.
 
@@ -113,7 +125,7 @@ SILLYCAD_NATIVE_GUI_TESTS=1 QT_QPA_PLATFORM=xcb pytest -q tests/test_sketch_nati
 
 ## Files
 
-Parts are saved as `.sillycad` files: readable JSON with a `format_version`, holding the feature list (sketches with their geometry and constraints, pads, pockets, revolves). Units are millimetres and degrees. The 3D shape isn't stored; it's rebuilt when the file opens. STL is export-only (binary).
+Parts are saved as `.sillycad` files: readable JSON with a `format_version`, holding the feature list (sketches with their geometry and constraints, pads, pockets, revolves, holes, and cosmetic thread metadata). Version 2 files include hole/thread data; version 1 files still load, but older SillyCAD versions cannot read version 2. Units are millimetres and degrees. The 3D shape isn't stored; it's rebuilt when the file opens. STL is export-only (binary).
 
 ## Layout
 

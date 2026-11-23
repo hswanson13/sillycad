@@ -10,11 +10,14 @@ from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QApplication, QToolButton, QWidget
 
 from sillycad.core.document import Document
-from sillycad.core.features import Pad, Pocket, Revolve, SketchFeature
+from sillycad.core.features import Hole, Pad, Pocket, Revolve, SketchFeature
 from sillycad.core.geometry import volume
 from sillycad.core.sketch import Sketch
+from sillycad.core.threads import ThreadSpec
+from sillycad.gui.hole_panel import HolePanel
 from sillycad.gui.main_window import MainWindow
 from sillycad.gui.property_panel import FeaturePanel
+from sillycad.gui.thread_editor import ThreadEditor
 
 
 @pytest.fixture(scope="module")
@@ -175,6 +178,113 @@ def test_join_cut_options_preview_and_edit_lock(window: MainWindow) -> None:
     assert window.doc.find(pocket.id).length == 5
     window.actions["undo"].trigger()
     assert window.doc.find(pocket.id).through_all
+
+
+def test_hole_preview_edit_clearance_thread_and_history(window: MainWindow) -> None:
+    base = SketchFeature("f1", "Base", sketch=rectangle(0, 0, 40, 20))
+    centers = Sketch()
+    point = centers.add_point(10, 10)
+    centers.add_point(20, 10)
+    placement = SketchFeature("f3", "Centers", "XY", 10, centers)
+    window._set_document(Document([base, Pad("f2", "Block", "f1"), placement], next_id=4), None)
+    window.actions["hole"].trigger()
+    panel = window._feature_panel
+    assert isinstance(panel, HolePanel)
+    assert panel.feature.sketch_id == "f3"
+    panel.point.setCurrentIndex(panel.point.findData(point))
+    panel.clearance.setCurrentIndex(panel.clearance.findData("M6"))
+    assert panel.diameter.value() == pytest.approx(6.6)
+    assert not panel.diameter.isEnabled()
+    assert volume(window.viewer.shape) == pytest.approx(8000 - 3.141592653589793 * 3.3**2 * 5)
+    panel.thread.setChecked(True)
+    assert "clearance" in panel.message.text()
+    panel.clearance.setCurrentIndex(0)
+    panel.diameter.setValue(5)
+    panel.thread.thread_class.setText("6H")
+    panel.thread.left_hand.setChecked(True)
+    assert not panel.message.text()
+    panel.ok.click()
+    hole = window.doc.find("f4")
+    assert isinstance(hole, Hole)
+    assert hole.thread.designation == "M6 x 1"
+    assert hole.thread.thread_class == "6H" and hole.thread.left_hand
+    window.undo_stack.undo()
+    assert window.doc.find("f4") is None
+    window.undo_stack.redo()
+    window.edit_feature("f4")
+    panel = window._feature_panel
+    assert isinstance(panel, HolePanel)
+    assert panel.thread.isChecked()
+    assert panel.thread.thread_class.text() == "6H"
+    panel.style.setCurrentIndex(panel.style.findData("counterbore"))
+    panel.apply.click()
+    assert window.doc.find("f4").style == "counterbore"
+    panel.cancel.click()
+    assert window.doc.find("f4").style == "counterbore"
+
+
+def test_existing_circle_cut_cosmetic_thread_panel(window: MainWindow) -> None:
+    base = SketchFeature("f1", "Base", sketch=rectangle(0, 0, 40, 20))
+    circle = Sketch()
+    circle.add_circle(10, 10, 2.5)
+    profile = SketchFeature("f3", "Circle", "XY", 10, circle)
+    cut = Pocket("f4", "Cut", "f3", length=5)
+    window._set_document(Document([base, Pad("f2", "Block", "f1"), profile, cut], next_id=5), None)
+    window.edit_feature("f4")
+    panel = window._feature_panel
+    assert isinstance(panel, FeaturePanel)
+    panel.thread.setChecked(True)
+    panel.thread.thread_class.setText("6H")
+    assert not panel.message.text()
+    panel.ok.click()
+    saved = window.doc.find("f4")
+    assert isinstance(saved, Pocket)
+    assert saved.thread.designation == "M6 x 1"
+    assert saved.thread.thread_class == "6H"
+    assert volume(window.model.shape) == pytest.approx(8000 - 3.141592653589793 * 2.5**2 * 5)
+
+
+def test_tapered_thread_requires_explicit_depth_in_hole_panel(window: MainWindow) -> None:
+    base = SketchFeature("f1", "Base", sketch=rectangle(0, 0, 40, 20))
+    centers = Sketch()
+    point = centers.add_point(10, 10)
+    window._set_document(
+        Document(
+            [base, Pad("f2", "Block", "f1"), SketchFeature("f3", "Centers", "XY", 10, centers)],
+            next_id=4,
+        ),
+        None,
+    )
+    window.actions["hole"].trigger()
+    panel = window._feature_panel
+    assert isinstance(panel, HolePanel)
+    panel.point.setCurrentIndex(panel.point.findData(point))
+    panel.thread.setChecked(True)
+    panel.thread.family.setCurrentText("NPT")
+    panel.thread.designation.setCurrentText("1/8-27 NPT")
+    assert "explicit thread depth" in panel.message.text()
+    panel.diameter.setValue(8)
+    panel.thread.full_depth.setChecked(False)
+    panel.thread.depth.setValue(4)
+    assert not panel.message.text()
+    panel.ok.click()
+    hole = window.doc.find("f4")
+    assert isinstance(hole, Hole)
+    assert hole.thread.family == "NPT" and hole.thread.depth == 4
+    assert not window.model.errors
+
+
+def test_custom_thread_editor_preserves_precision(app: QApplication) -> None:
+    spec = ThreadSpec(
+        "Custom",
+        "Special",
+        depth=4,
+        custom_major=10.12345,
+        custom_pitch=0.3175,
+        custom_taper=0.0625,
+    )
+    editor = ThreadEditor(spec)
+    assert editor.value() == spec
 
 
 def test_apply_creates_distinct_features_and_undo_cancels_active_panel(

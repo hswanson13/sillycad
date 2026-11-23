@@ -44,6 +44,7 @@ from sillycad.core.constants import STL_ANGULAR_DEFLECTION, STL_LINEAR_DEFLECTIO
 from sillycad.core.document import Document, Model, recompute
 from sillycad.core.export import export_stl
 from sillycad.core.features import (
+    Hole,
     Pad,
     Pocket,
     Revolve,
@@ -58,6 +59,7 @@ from sillycad.gui import theme
 from sillycad.gui.browser import ModelBrowser
 from sillycad.gui.commands import SnapshotCommand, redo_shortcuts
 from sillycad.gui.dialogs import SketchPlaneDialog, StlDialog
+from sillycad.gui.hole_panel import HolePanel
 from sillycad.gui.icons import icon
 from sillycad.gui.marking_menu import MarkingMenu
 from sillycad.gui.navigation import NavigationBar
@@ -83,6 +85,7 @@ _FEATURE_COMMANDS = (
     "pad",
     "pocket",
     "revolve",
+    "hole",
 )
 
 
@@ -99,7 +102,7 @@ class MainWindow(QMainWindow):
         self.undo_group.setActiveStack(self.undo_stack)
         self.undo_stack.cleanChanged.connect(lambda _clean: self._update_title())
         self._sketch_mode: SketchMode | None = None
-        self._feature_panel: FeaturePanel | None = None
+        self._feature_panel: FeaturePanel | HolePanel | None = None
         self._committing_feature = False
         self._preview_fitted = False
         self.path: Path | None = None  # where the document is saved
@@ -222,6 +225,12 @@ class MainWindow(QMainWindow):
                 "revolve",
                 "R",
                 "Spin a sketch around an axis",
+            ),
+            "hole": self._action(
+                "Hole",
+                lambda: self.add_solid(Hole),
+                "hole",
+                tip="Create a hole at a sketch point, with optional cosmetic threads",
             ),
             "fit": self._action(
                 "Zoom All", lambda: self.viewer.set_view("fit"), "fit", "F", "Fit the model"
@@ -589,7 +598,15 @@ class MainWindow(QMainWindow):
         return answer == QMessageBox.StandardButton.Yes
 
     def add_solid(self, kind: type[SolidFeature]) -> None:
-        sketch = self._default_sketch()
+        if kind is Hole:
+            selected = self.doc.find(self.tree.current_id() or "")
+            sketch = (
+                selected
+                if isinstance(selected, SketchFeature)
+                else next(iter(reversed(self.doc.sketches())), None)
+            )
+        else:
+            sketch = self._default_sketch()
         if sketch is None:
             QMessageBox.information(self, kind.__name__, "Draw a sketch first (New Sketch).")
             return
@@ -597,14 +614,18 @@ class MainWindow(QMainWindow):
 
     def _new_solid(self, kind: type[SolidFeature], sketch_id: str) -> SolidFeature:
         draft = copy.deepcopy(self.doc)
-        name = "Revolution" if kind is Revolve else "Extrusion"
+        name = "Revolution" if kind is Revolve else "Hole" if kind is Hole else "Extrusion"
         return kind(draft.new_id(), draft.new_name(name), sketch_id)
 
     def _open_feature_panel(self, feature: SolidFeature, *, editing: bool) -> None:
         self._cancel_feature_panel()
         self._preview_fitted = False
         sketches = self.doc.sketches(before=feature.id if editing else None)
-        panel = FeaturePanel(feature, sketches, self._preview, editing=editing, parent=self)
+        panel: FeaturePanel | HolePanel
+        if isinstance(feature, Hole):
+            panel = HolePanel(feature, sketches, self._preview, editing=editing, parent=self)
+        else:
+            panel = FeaturePanel(feature, sketches, self._preview, editing=editing, parent=self)
         self._feature_panel = panel
         panel.accepted.connect(lambda value: self._commit_feature(value, keep_open=False))
         panel.applied.connect(lambda value: self._commit_feature(value, keep_open=True))
@@ -615,7 +636,12 @@ class MainWindow(QMainWindow):
         for key in _FEATURE_COMMANDS:
             self.actions[key].setEnabled(False)
         self._sync_history_actions()
-        self.statusBar().showMessage("Select the profile and adjust the feature.")
+        prompt = (
+            "Select a sketch center and adjust the hole."
+            if isinstance(feature, Hole)
+            else "Select the profile and adjust the feature."
+        )
+        self.statusBar().showMessage(prompt)
 
     def _commit_feature(self, feature: SolidFeature, *, keep_open: bool) -> None:
         panel = self._feature_panel
@@ -647,7 +673,12 @@ class MainWindow(QMainWindow):
                 next_identity = self._new_solid(type(feature), feature.sketch_id)
                 feature = dataclasses.replace(feature, id=next_identity.id, name=next_identity.name)
                 self.model_dock.setWindowTitle(feature.name)
-                panel.next_feature(feature)
+                if isinstance(panel, HolePanel) and isinstance(feature, Hole):
+                    panel.next_feature(feature)
+                elif isinstance(panel, FeaturePanel) and not isinstance(feature, Hole):
+                    panel.next_feature(feature)
+                else:
+                    raise RuntimeError("The feature type changed while applying the panel.")
             self.statusBar().showMessage(f"Applied {committed_name}.")
         else:
             self._close_feature_panel()

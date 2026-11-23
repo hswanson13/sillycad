@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from sillycad.core.document import Document
-from sillycad.core.features import Feature, Pad, Pocket, Revolve, SketchFeature
+from sillycad.core.features import Feature, Hole, Pad, Pocket, Revolve, SketchFeature
 from sillycad.gui import theme
 from sillycad.gui.icons import icon
 from sillycad.gui.tooltips import tooltip
@@ -135,6 +135,7 @@ class ModelBrowser(QTreeWidget):
             Pad: "pad",
             Pocket: "pocket",
             Revolve: "revolve",
+            Hole: "hole",
         }[type(feature)]
         kind = "sketch" if isinstance(feature, SketchFeature) else "feature"
         item = self._item(parent, feature.name, kind, key, icon_name, error=feature.id in errors)
@@ -280,10 +281,14 @@ def _describe(feature: Feature, names: dict[str, str]) -> str:
         where = "a picked face" if feature.plane == "Face" else feature.plane
         return f"Sketch on {where}{offset}"
     source = f" · {names.get(feature.sketch_id, '?')}"
+    if isinstance(feature, Hole):
+        thread = f", {feature.thread.designation} cosmetic thread" if feature.thread else ""
+        return f"Hole {feature.style}{thread}{source}"
     if isinstance(feature, Pad):
         extra = ", symmetric" if feature.symmetric else ", reversed" if feature.reversed else ""
         return f"Pad {feature.length:g} mm{extra}{source}"
     if isinstance(feature, Pocket):
         depth = "through all" if feature.through_all else f"{feature.length:g} mm"
-        return f"Pocket {depth}{', reversed' if feature.reversed else ''}{source}"
+        thread = f", {feature.thread.designation} cosmetic thread" if feature.thread else ""
+        return f"Pocket {depth}{', reversed' if feature.reversed else ''}{thread}{source}"
     return f"Revolve {feature.angle:g}°{source}"

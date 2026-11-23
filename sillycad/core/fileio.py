@@ -12,11 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from sillycad.core.document import Document
-from sillycad.core.features import Feature, Pad, Pocket, Revolve, SketchFeature
+from sillycad.core.features import Feature, Hole, Pad, Pocket, Revolve, SketchFeature
 from sillycad.core.geometry import Placement
 from sillycad.core.sketch import Arc, Circle, Constraint, Line, Point, Sketch
+from sillycad.core.threads import ThreadSpec
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 SUFFIX = ".sillycad"
 
 _FEATURES: dict[str, type] = {
@@ -24,6 +25,7 @@ _FEATURES: dict[str, type] = {
     "pad": Pad,
     "pocket": Pocket,
     "revolve": Revolve,
+    "hole": Hole,
 }
 _GEOMETRY: dict[str, type] = {"point": Point, "line": Line, "circle": Circle, "arc": Arc}
 
@@ -87,6 +89,8 @@ def _feature_from_dict(data: dict[str, Any]) -> Feature:
         data["sketch"] = _sketch_from_dict(data["sketch"])
         if data.get("face") is not None:
             data["face"] = Placement(**{k: tuple(v) for k, v in data["face"].items()})
+    if cls in (Pocket, Hole) and data.get("thread") is not None:
+        data["thread"] = ThreadSpec(**_only_fields(ThreadSpec, data["thread"]))
     return cls(**_only_fields(cls, data))
 
 
