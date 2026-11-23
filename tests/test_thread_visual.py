@@ -13,7 +13,7 @@ from sillycad.core.document import Document, recompute
 from sillycad.core.features import Feature, Hole, Pad, Pocket, SketchFeature
 from sillycad.core.fileio import from_dict, to_dict
 from sillycad.core.geometry import Placement, volume
-from sillycad.core.sketch import Sketch
+from sillycad.core.sketch import Circle, Sketch
 from sillycad.core.threads import THREAD_FAMILIES, ThreadSpec, thread_sizes
 from sillycad.gui.thread_visual import thread_linework
 from sillycad.sketch_math import add_rectangle
@@ -86,6 +86,26 @@ def test_threaded_circular_cut_has_strokes_and_failed_hole_does_not() -> None:
     doc.features.append(bad)
     model = recompute(doc)
     assert "f5" in model.errors
+    assert len(thread_linework(doc, model)) == 1
+
+
+def test_threaded_circle_cut_accepts_an_independent_open_guide() -> None:
+    doc = threaded_block()
+    doc.features.pop()
+    sketch = Sketch()
+    line = sketch.add_line(9, 10, 11, 10)
+    circle = sketch.add_circle(10, 10, 2.5)
+    curve = sketch.geo[circle]
+    assert isinstance(curve, Circle)
+    sketch.add_constraint("midpoint", [curve.center, line])
+    doc.features.extend(
+        [
+            SketchFeature("f3", "Circle", "XY", 10, sketch),
+            Pocket("f4", "Cut", "f3", thread=ThreadSpec("ISO metric", "M6 x 1")),
+        ]
+    )
+    model = recompute(doc)
+    assert not model.errors
     assert len(thread_linework(doc, model)) == 1
 
 

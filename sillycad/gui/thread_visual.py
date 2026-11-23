@@ -15,7 +15,7 @@ from OCC.Core.TopoDS import TopoDS_Compound, TopoDS_Shape
 from sillycad.core.document import Document, Model, _through_all_length
 from sillycad.core.features import Hole, Pocket, SketchFeature
 from sillycad.core.geometry import plane_trsf
-from sillycad.core.sketch import Arc, Circle, Line
+from sillycad.core.profiles import sole_circular_profile
 from sillycad.core.threads import resolve_thread
 
 log = logging.getLogger(__name__)
@@ -90,15 +90,11 @@ def thread_linework(doc: Document, model: Model) -> list[TopoDS_Shape]:
             else:
                 recess = 0.0
         else:
-            curves = [
-                g
-                for g in sketch.sketch.geo.values()
-                if isinstance(g, Line | Arc | Circle) and not g.construction
-            ]
-            if len(curves) != 1 or not isinstance(curves[0], Circle):
+            circle = sole_circular_profile(sketch.sketch)
+            if circle is None:
                 continue
-            center = sketch.sketch.point(curves[0].center)
-            diameter = curves[0].radius * 2
+            center = sketch.sketch.point(circle.center)
+            diameter = circle.radius * 2
             recess = 0.0
         size = resolve_thread(feature.thread)
         cutter_length = (

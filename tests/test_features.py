@@ -10,9 +10,10 @@ from OCC.Core.TopoDS import topods
 from pytest import approx
 
 from sillycad.core.document import Document, recompute
-from sillycad.core.features import Pad, Pocket, Revolve, SketchFeature, plane_from_face
-from sillycad.core.geometry import BASE_PLANES, face_placement, outline_in_plane, volume
-from sillycad.core.sketch import Sketch
+from sillycad.core.features import Hole, Pad, Pocket, Revolve, SketchFeature, plane_from_face
+from sillycad.core.geometry import BASE_PLANES, Placement, face_placement, outline_in_plane, volume
+from sillycad.core.sketch import Circle, Line, Sketch
+from sillycad.core.solver import solve
 
 
 def rect(x0: float, y0: float, x1: float, y1: float) -> Sketch:
@@ -192,6 +193,45 @@ def test_pad_on_bottom_face_grows_outward() -> None:
     assert not model.errors
     assert volume(model.shape) == approx(8000 + 500)
     assert bounds(model.shape)[2] == approx(-5)  # grew downward, out of the material
+
+
+def test_large_face_circle_with_midpoint_guide_extrudes_without_losing_constraints() -> None:
+    doc = padded_block()
+    doc.features.append(
+        Hole(
+            doc.new_id(),
+            "Hole",
+            "",
+            diameter=6,
+            through_all=True,
+            face=Placement((0, 0, 10), (0, 0, 1), (1, 0, 0)),
+            center=(15, 15),
+        )
+    )
+    before = volume(recompute(doc).shape)
+    sketch = Sketch()
+    line = sketch.add_line(20, 0, 20, 10)
+    circle = sketch.add_circle(20, 5, 100)
+    curve = sketch.geo[circle]
+    assert isinstance(curve, Circle)
+    midpoint = sketch.add_constraint("midpoint", [curve.center, line])
+    radius = sketch.add_constraint("radius", [circle], 100)
+    assert solve(sketch).ok
+    sketch_id = add_sketch(doc, sketch, "XZ")
+    add(doc, Pad, sketch_id, length=5)
+    model = recompute(doc)
+    assert not model.errors
+    assert volume(model.shape) == approx(before + math.pi * 100**2 * 5)
+    assert sketch.constraints[midpoint].refs == [curve.center, line]
+    assert sketch.constraints[radius].value == 100
+    assert isinstance(sketch.geo[line], Line) and not sketch.geo[line].construction
+    sketch.set_value(radius, 120)
+    assert solve(sketch).ok
+    a, b = sketch.line_points(line)
+    assert sketch.point(curve.center) == approx(((a[0] + b[0]) / 2, (a[1] + b[1]) / 2))
+    changed = recompute(doc)
+    assert not changed.errors
+    assert volume(changed.shape) == approx(before + math.pi * 120**2 * 5)
 
 
 def test_pad_on_slanted_face() -> None:

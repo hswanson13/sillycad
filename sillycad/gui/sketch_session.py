@@ -7,7 +7,7 @@ from collections.abc import Callable
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QUndoStack
 
-from sillycad.core.profiles import ProfileError, find_profiles
+from sillycad.core.profiles import ProfileError, analyze_profiles
 from sillycad.core.sketch import DIMENSIONS, RULES, XY, Sketch, label
 from sillycad.core.solver import SolveResult, drag, solve
 from sillycad.gui.commands import SnapshotCommand
@@ -44,9 +44,12 @@ class SketchSession(QObject):
             ref for cid in self.bad_constraints for ref in self.sketch.constraints[cid].refs
         }
         try:
-            count = len(find_profiles(self.sketch))
+            profiles = analyze_profiles(self.sketch)
+            count = len(profiles.faces)
             self.profile_text = f"{count} closed profile{'s' if count != 1 else ''}"
-            self.problems = []
+            if warning := profiles.warning():
+                self.profile_text += f". {warning}"
+            self.problems = profiles.open_ends
         except ProfileError as exc:
             self.profile_text = str(exc)
             self.problems = exc.points

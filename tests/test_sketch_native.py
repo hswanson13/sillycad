@@ -507,6 +507,7 @@ def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         exercise_live_drawing_dimensions(window, tmp_path)
         exercise_navigation_recovery(window, app)
         exercise_long_thread_stress(window, app)
+        exercise_closed_circle_with_open_guide(window)
     finally:
         if window._sketch_mode is not None:
             window._sketch_mode.session.undo_stack.setClean()
@@ -514,6 +515,64 @@ def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         window.undo_stack.setClean()
         window.close()
         app.processEvents()
+
+
+def exercise_closed_circle_with_open_guide(window: MainWindow) -> None:
+    """Extrude a large face circle while retaining its guide and solver constraints."""
+    base = Sketch()
+    add_rectangle(base, (0, 0), (40, 20))
+    hole = Hole(
+        "f3",
+        "Hole",
+        "",
+        diameter=6,
+        through_all=True,
+        style="counterbore",
+        face=Placement((0, 0, 10), (0, 0, 1), (1, 0, 0)),
+        center=(15, 15),
+        thread=ThreadSpec("ISO metric", "M6 x 1"),
+    )
+    sketch = Sketch()
+    line = sketch.add_line(20, 0, 20, 10)
+    circle = sketch.add_circle(20, 5, 100)
+    curve = sketch.geo[circle]
+    assert isinstance(curve, Circle)
+    midpoint = sketch.add_constraint("midpoint", [curve.center, line])
+    radius = sketch.add_constraint("radius", [circle], 100)
+    source = SketchFeature("f4", "Circle", "XZ", 0, sketch)
+    window._set_document(
+        Document(
+            [SketchFeature("f1", "Base", sketch=base), Pad("f2", "Block", "f1"), hole, source], 5
+        ),
+        None,
+    )
+    before = volume(window.model.shape)
+    window.actions["extrude"].trigger()
+    panel = window._feature_panel
+    assert panel is not None
+    assert panel.feature.sketch_id == "f4" and "open" in panel.message.text().lower()
+    panel.ok.click()
+    assert not window.model.errors
+    assert volume(window.model.shape) == pytest.approx(before + math.pi * 100**2 * 10)
+    window.undo_stack.undo()
+    assert volume(window.model.shape) == pytest.approx(before)
+    window.undo_stack.redo()
+    assert not window.model.errors
+
+    window.edit_feature("f4")
+    QTest.qWait(550)
+    mode = window._sketch_mode
+    assert mode is not None and mode.session.result.ok
+    assert "1 closed profile" in mode.session.profile_text and "open" in mode.session.profile_text
+    assert mode.session.sketch.constraints[midpoint].refs == [curve.center, line]
+    assert mode.session.change_dimension(radius, 125)
+    mode.actions["finish"].trigger()
+    assert not window.model.errors
+    assert volume(window.model.shape) == pytest.approx(before + math.pi * 125**2 * 10)
+    window.undo_stack.undo()
+    assert volume(window.model.shape) == pytest.approx(before + math.pi * 100**2 * 10)
+    window.undo_stack.redo()
+    assert not window.model.errors
 
 
 def exercise_navigation_recovery(window: MainWindow, app: QApplication) -> None:

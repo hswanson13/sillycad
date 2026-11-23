@@ -33,8 +33,7 @@ from sillycad.core.features import (
     validate_thread,
 )
 from sillycad.core.geometry import plane_axes, volume
-from sillycad.core.profiles import ProfileError
-from sillycad.core.sketch import Arc, Circle, Line
+from sillycad.core.profiles import ProfileError, sole_circular_profile
 
 log = logging.getLogger(__name__)
 
@@ -137,15 +136,11 @@ def _apply(
             tool = hole_shape(f, sk, through_length)
         else:
             if f.thread is not None:
-                curves = [
-                    g
-                    for g in sk.sketch.geo.values()
-                    if isinstance(g, Line | Arc | Circle) and not g.construction
-                ]
-                if len(curves) != 1 or not isinstance(curves[0], Circle):
+                circle = sole_circular_profile(sk.sketch)
+                if circle is None:
                     raise FeatureError("Threaded Pocket needs exactly one circular profile.")
                 depth = through_length if f.through_all else f.length
-                validate_thread(f.thread, 2 * curves[0].radius, depth, cylindrical=True)
+                validate_thread(f.thread, 2 * circle.radius, depth, cylindrical=True)
             tool = pocket_shape(f, sk, through_length)
         result = _clean(BRepAlgoAPI_Cut(body, tool).Shape())
         if isinstance(f, Hole) and volume(body) - volume(result) < 1e-8:

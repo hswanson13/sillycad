@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from sillycad.core.features import Pad, Pocket, Revolve, SketchFeature
+from sillycad.core.profiles import ProfileError, analyze_profiles
 from sillycad.core.sketch import Line
 from sillycad.gui.thread_editor import ThreadEditor
 from sillycad.gui.tooltips import tooltip
@@ -48,6 +49,7 @@ class FeaturePanel(QWidget):
         self.editing = editing
         self._preview = preview
         self._sketches = {sketch.id: sketch for sketch in sketches}
+        self._profile_warnings: dict[str, str] = {}
         self._last_reversed = getattr(feature, "reversed", False)
 
         layout = QVBoxLayout(self)
@@ -265,7 +267,14 @@ class FeaturePanel(QWidget):
                 angle=self.angle.value() if self.angle.isEnabled() else 360,
             )
         error = self._preview(copy.deepcopy(self.feature))
-        self.message.setText(f"⚠ {error}" if error else "")
+        sketch = self._sketches.get(sketch_id)
+        if not error and sketch is not None and sketch_id not in self._profile_warnings:
+            try:
+                self._profile_warnings[sketch_id] = analyze_profiles(sketch.sketch).warning()
+            except ProfileError as exc:
+                self._profile_warnings[sketch_id] = str(exc)
+        message = error or self._profile_warnings.get(sketch_id, "")
+        self.message.setText(f"⚠ {message}" if message else "")
 
     def _current_feature(self) -> Pad | Pocket | Revolve:
         if isinstance(self.feature, Pad | Pocket):

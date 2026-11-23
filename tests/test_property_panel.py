@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication, QToolButton, QWidget
 from sillycad.core.document import Document
 from sillycad.core.features import Hole, Pad, Pocket, Revolve, SketchFeature
 from sillycad.core.geometry import Placement, volume
-from sillycad.core.sketch import Sketch
+from sillycad.core.sketch import Circle, Sketch
 from sillycad.core.threads import ThreadSpec
 from sillycad.gui.hole_panel import HolePanel
 from sillycad.gui.main_window import MainWindow
@@ -526,6 +526,34 @@ def test_unique_closed_profile_and_external_undo(window: MainWindow) -> None:
     window.actions["redo"].trigger()
     assert window._feature_panel is None
     assert window.doc.find("f2").name == "Renamed"
+
+
+def test_extrude_defaults_to_new_circle_with_open_guide_and_warns(window: MainWindow) -> None:
+    base = SketchFeature("f1", "Base", sketch=rectangle(0, 0, 40, 20))
+    sketch = Sketch()
+    line = sketch.add_line(20, 0, 20, 10)
+    circle = sketch.add_circle(20, 5, 100)
+    curve = sketch.geo[circle]
+    assert isinstance(curve, Circle)
+    center = curve.center
+    sketch.add_constraint("midpoint", [center, line])
+    sketch.add_constraint("radius", [circle], 100)
+    face_sketch = SketchFeature("f3", "Circle", "XZ", 0, sketch)
+    window._set_document(Document([base, Pad("f2", "Block", "f1"), face_sketch], 4), None)
+
+    window.add_solid(Pad)
+    panel = window._feature_panel
+    assert isinstance(panel, FeaturePanel)
+    assert panel.feature.sketch_id == "f3"
+    assert "open" in panel.message.text().lower()
+    assert volume(window.viewer.shape) == pytest.approx(8000 + 100000 * 3.141592653589793)
+    panel.ok.click()
+    assert not window.model.errors
+    assert window.doc.find("f3").sketch == sketch
+    window.undo_stack.undo()
+    assert window.doc.find("f3").sketch == sketch
+    window.undo_stack.redo()
+    assert not window.model.errors
 
 
 def test_close_cancel_keeps_active_panel(

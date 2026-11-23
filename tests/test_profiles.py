@@ -9,7 +9,7 @@ from pytest import approx
 
 from sillycad.core.features import SketchFeature
 from sillycad.core.geometry import BASE_PLANES, place_on_plane
-from sillycad.core.profiles import ProfileError, find_profiles
+from sillycad.core.profiles import ProfileError, analyze_profiles, find_profiles
 from sillycad.core.sketch import Sketch
 
 
@@ -76,6 +76,54 @@ def test_open_profile_is_reported_with_its_loose_ends() -> None:
     with pytest.raises(ProfileError, match="Open profile") as err:
         find_profiles(s)
     assert sorted(err.value.points) == [(0, 0), (10, 10)]
+
+
+def test_closed_circle_can_coexist_with_an_independent_open_line() -> None:
+    s = Sketch()
+    line = s.add_line(0, -5, 0, 5)
+    s.add_circle(0, 0, 100)
+    analysis = analyze_profiles(s)
+    (face,) = analysis.faces
+    assert area(face) == approx(math.pi * 100**2)
+    assert analysis.open_curves == frozenset({line})
+    assert analysis.open_ends == [(0, -5), (0, 5)]
+    assert "1 open curve" in analysis.warning()
+
+
+def test_closed_loops_and_separate_open_chain_are_classified_independently() -> None:
+    s = Sketch()
+    polygon(s, [(0, 0), (40, 0), (40, 20), (0, 20)])
+    s.add_circle(10, 10, 5)
+    first = s.add_line(7, 10, 10, 12)
+    second = s.add_line(10, 12, 12, 10)
+    analysis = analyze_profiles(s)
+    assert len(analysis.faces) == 1
+    assert area(analysis.faces[0]) == approx(800 - math.pi * 25)
+    assert analysis.open_curves == frozenset({first, second})
+    assert sorted(analysis.open_ends) == [(7, 10), (12, 10)]
+    assert "2 open curves" in analysis.warning()
+
+
+def test_open_line_crossing_a_closed_profile_is_not_silently_ignored() -> None:
+    s = Sketch()
+    s.add_circle(0, 0, 10)
+    s.add_line(0, 0, 20, 0)
+    with pytest.raises(ProfileError, match="crosses"):
+        find_profiles(s)
+
+
+def test_line_touching_a_circle_or_branching_a_closed_loop_is_not_ignored() -> None:
+    s = Sketch()
+    s.add_circle(0, 0, 10)
+    s.add_line(0, 0, 10, 0)
+    with pytest.raises(ProfileError, match="crosses"):
+        find_profiles(s)
+
+    s = Sketch()
+    polygon(s, [(0, 0), (10, 0), (10, 10), (0, 10)])
+    s.add_line(10, 10, 5, 5)
+    with pytest.raises(ProfileError, match="More than two"):
+        find_profiles(s)
 
 
 def test_self_intersecting_profile_is_reported() -> None:

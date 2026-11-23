@@ -5,7 +5,7 @@ import os
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from sillycad.core.sketch import ORIGIN, Line, Sketch
+from sillycad.core.sketch import ORIGIN, Circle, Line, Sketch
 from sillycad.gui.sketch_session import SketchSession
 from sillycad.sketch_math import add_rectangle
 
@@ -70,3 +70,24 @@ def test_drag_solves_and_commits_one_undo_step(app: QApplication) -> None:
     assert session.undo_stack.count() == 1
     session.undo_stack.undo()
     assert session.sketch.point(point) == pytest.approx((10, 0))
+
+
+def test_open_guide_warning_preserves_midpoint_and_radius_constraints(app: QApplication) -> None:
+    sketch = Sketch()
+    line = sketch.add_line(0, -5, 0, 5)
+    circle = sketch.add_circle(0, 0, 100)
+    curve = sketch.geo[circle]
+    assert isinstance(curve, Circle)
+    midpoint = sketch.add_constraint("midpoint", [curve.center, line])
+    radius = sketch.add_constraint("radius", [circle], 100)
+    session = SketchSession(sketch)
+    assert session.result.ok
+    assert "1 closed profile" in session.profile_text and "open" in session.profile_text.lower()
+    assert len(session.problems) == 2
+    session.set_selection([line])
+    session.toggle_construction()
+    assert session.profile_text == "1 closed profile"
+    assert session.sketch.constraints[midpoint].refs == [curve.center, line]
+    assert session.sketch.constraints[radius].value == 100
+    session.undo_stack.undo()
+    assert "open" in session.profile_text.lower()

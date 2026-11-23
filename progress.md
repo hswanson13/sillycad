@@ -2,9 +2,9 @@
 
 # SillyCAD Progress
 
-**Where we are:** 🎉 M1–M5, sketching on faces, and U1–U6 are done. U7 holes and partial cosmetic thread support are implemented; comprehensive threading remains in progress. U8 live dimensions and U9 navigation/thread-display fixes are done. The headless suite has 429 passing tests; the native-window integration test passes separately.
+**Where we are:** 🎉 M1–M5, sketching on faces, and U1–U6 are done. U7 holes and partial cosmetic thread support are implemented; comprehensive threading remains in progress. U8 live dimensions, U9 navigation/thread-display fixes and U10 open-guide extrusion are done. The headless suite has 437 passing tests; the native-window integration test passes separately.
 
-**Needs you:** try the U9 workflow below and review the threading limitations before relying on it for a design.
+**Needs you:** try the U10 workflow below and review the threading limitations before relying on it for a design.
 
 Legend: ✅ done · 🔨 in progress · ⬜ not started
 
@@ -186,9 +186,24 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 - [x] On the test machine, rendering linework for twelve 500 mm threaded holes fell from 4.2 s to about 0.3 s; ten native live-preview changes had a 0.411 s median. These are measurements, not performance guarantees. Complex Boolean recomputations can still take time.
 - [x] Ruff passes. The full headless suite has 429 passed and one native test skipped; the native-window test passes separately.
 
+## ✅ U10: Closed profiles with open guides
+
+- [x] An independent open curve no longer prevents a closed profile from being extruded or revolved. The sketch and feature panel warn that it is excluded; its geometry and constraints are retained.
+- [x] Crossings or touches (except adjacent endpoints), branching and an open-only sketch still produce profile errors. There is no individual-region selection yet; all eligible closed profiles are used.
+- [x] Threaded circular Cuts use the same profile rules and retain their cosmetic strokes. The existing unique-profile/default-sketch selection now recognizes a closed circle alongside an open guide.
+- [x] Tested a 100 mm radius circle centered on an open line by a midpoint constraint on the side of a holed block. Extrusion volume, radius edits, solver state, undo/redo and threaded Cuts have headless and native regression coverage.
+- [x] The user's saved part was loaded without writing to it: its circle selected the correct sketch, the 10 mm Join added 314,159.265 mm³, and both existing constraints remained unchanged.
+- [x] Ruff passes. The full headless suite has 437 passed and one native test skipped; the native-window test passes separately.
+
 ---
 
 ## How to try it
+
+### U10
+
+1. Restart SillyCAD and open the saved part. Select **Sketch2** if necessary, choose **Extrude** (`E`), and use **Join** with the desired distance. The 100 mm radius circle can extend past the supporting face as long as the result is connected.
+2. The warning notes that the open guide line is not included in the solid. To remove the warning, edit the sketch, select the line and press `G` for Construction; the midpoint and radius constraints remain. Use Finish Sketch, then extrude again.
+3. Double-click the circle's radius dimension to change it, then use undo/redo. The guide and circle may still move unless separately constrained; face-outline snaps are positional rather than linked to the body.
 
 ### U9
 

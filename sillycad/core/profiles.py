@@ -1,11 +1,13 @@
 """Turn a sketch into closed profiles: OCCT faces in sketch coordinates (z = 0).
 
 Non-construction lines, arcs and circles are joined end to end into loops.
+Independent open curves can accompany closed loops but do not form faces.
 A loop inside another loop becomes a hole; a loop inside a hole becomes a new
 face again. Problems raise ProfileError with the trouble spots, never crash.
 """
 
 import math
+from dataclasses import dataclass
 
 from OCC.Core.BRepBuilderAPI import (
     BRepBuilderAPI_MakeEdge,
@@ -32,15 +34,51 @@ class ProfileError(ValueError):
         self.points = points or []
 
 
-def find_profiles(sketch: Sketch) -> list[TopoDS_Face]:
-    """Return the closed profiles of ``sketch`` as faces. Raises ProfileError."""
+@dataclass(frozen=True)
+class ProfileAnalysis:
+    """Closed faces and independent open curves excluded from those faces."""
+
+    faces: list[TopoDS_Face]
+    open_curves: frozenset[str]
+    open_ends: list[XY]
+
+    def warning(self) -> str:
+        count = len(self.open_curves)
+        if not count:
+            return ""
+        return (
+            f"{count} open curve{'s' if count != 1 else ''} not included in the profile. "
+            "Make guides construction geometry or close them."
+        )
+
+
+def analyze_profiles(sketch: Sketch) -> ProfileAnalysis:
+    """Find closed faces and report independent open curves. Raises ProfileError."""
     curves = [g for g in sketch.geo.values() if isinstance(g, Line | Arc | Circle)]
     curves = [c for c in curves if not c.construction]
     if not curves:
         raise ProfileError("No profile yet: draw a closed shape (construction lines don't count).")
     loops = _Loops(sketch, curves)
     _check_crossings(loops.edges)
-    return _faces(loops.wires, loops.samples)
+    return ProfileAnalysis(_faces(loops.wires, loops.samples), loops.open_curves, loops.open_ends)
+
+
+def find_profiles(sketch: Sketch) -> list[TopoDS_Face]:
+    """Return the closed profiles of ``sketch`` as faces. Raises ProfileError."""
+    return analyze_profiles(sketch).faces
+
+
+def sole_circular_profile(sketch: Sketch) -> Circle | None:
+    """Return the only profile curve if it is a circle, ignoring independent open curves."""
+    analysis = analyze_profiles(sketch)
+    curves = [
+        curve
+        for curve in sketch.geo.values()
+        if isinstance(curve, Line | Arc | Circle)
+        and not curve.construction
+        and curve.id not in analysis.open_curves
+    ]
+    return curves[0] if len(curves) == 1 and isinstance(curves[0], Circle) else None
 
 
 def curve_edge(sketch: Sketch, curve: Line | Arc | Circle) -> TopoDS_Edge:
@@ -81,13 +119,8 @@ class _Loops:
             ends.setdefault(a, []).append((c, b))
             ends.setdefault(b, []).append((c, a))
 
-        loose = [self.nodes[n] for n, cs in ends.items() if len(cs) == 1]
-        if loose:
-            raise ProfileError(
-                f"Open profile: {len(loose)} loose end(s) (red rings in the sketch). "
-                "Join them to other ends: draw onto the point, or add Coincident.",
-                loose,
-            )
+        loose_nodes = [n for n, cs in ends.items() if len(cs) == 1]
+        self.open_ends = [self.nodes[n] for n in loose_nodes]
         branches = [self.nodes[n] for n, cs in ends.items() if len(cs) > 2]
         if branches:
             raise ProfileError(
@@ -95,7 +128,31 @@ class _Loops:
                 "Make the extra lines construction lines.",
                 branches,
             )
-        self._walk(ends)
+        open_nodes: set[int] = set()
+        pending = list(loose_nodes)
+        while pending:
+            node = pending.pop()
+            if node not in open_nodes:
+                open_nodes.add(node)
+                pending.extend(other for _, other in ends[node] if other not in open_nodes)
+        self._walk({node: links for node, links in ends.items() if node not in open_nodes})
+        if not self.wires and self.open_ends:
+            raise ProfileError(
+                f"Open profile: {len(self.open_ends)} loose end(s) (red rings in the sketch). "
+                "Join them to other ends: draw onto the point, or add Coincident.",
+                self.open_ends,
+            )
+        open_edges: list[tuple[TopoDS_Edge, int, int]] = []
+        open_curves: set[str] = set()
+        for node, links in ends.items():
+            if node in open_nodes:
+                for curve, other in links:
+                    if curve.id not in open_curves:
+                        open_edges.append((self._edge(curve, node, other), node, other))
+                        open_curves.add(curve.id)
+        self.open_curves = frozenset(open_curves)
+        if open_edges:
+            self.edges.append(open_edges)
 
     def _start(self, c: Line | Arc) -> XY:
         return self.sketch.point(c.p1 if isinstance(c, Line) else c.start)
