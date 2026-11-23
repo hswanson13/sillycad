@@ -14,7 +14,7 @@ from OCC.Core.TopAbs import TopAbs_FACE
 from OCC.Core.TopExp import TopExp_Explorer
 from OCC.Core.TopoDS import topods
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QTimer, Signal
-from PySide6.QtGui import QKeyEvent, QKeySequence, QMouseEvent
+from PySide6.QtGui import QCursor, QKeyEvent, QKeySequence, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication, QMenu, QToolButton, QWidget
 
 from sillycad.core.document import Document
@@ -439,3 +439,65 @@ def test_right_click_cancels_plane_pick_without_opening_marking_menu(app: QAppli
     viewer.mouseReleaseEvent(event)
     assert cancelled == [True]
     assert not menus
+
+
+def test_navigation_cursors_do_not_stack_global_overrides(app: QApplication) -> None:
+    viewer = Viewer()
+    viewer._available_cursors = {
+        "arrow": QCursor(Qt.CursorShape.ArrowCursor),
+        "zoom": QCursor(Qt.CursorShape.SizeVerCursor),
+        "pan": QCursor(Qt.CursorShape.SizeAllCursor),
+    }
+    app.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+    try:
+        for _ in range(20):
+            viewer.cursor = "zoom"
+            viewer.cursor = "pan"
+            viewer.cursor = "arrow"
+        assert app.overrideCursor().shape() == Qt.CursorShape.WaitCursor
+        assert QWidget.cursor(viewer).shape() == Qt.CursorShape.ArrowCursor
+    finally:
+        while app.overrideCursor() and app.overrideCursor().shape() != Qt.CursorShape.WaitCursor:
+            app.restoreOverrideCursor()
+        app.restoreOverrideCursor()
+
+
+def test_wheel_ignores_nonvertical_events_and_handles_small_trackpad_deltas(
+    app: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    viewer = Viewer()
+    display = Mock()
+    monkeypatch.setattr(viewer, "_display", display)
+
+    def wheel(pixel: QPoint, angle: QPoint) -> None:
+        viewer.wheelEvent(
+            QWheelEvent(
+                QPointF(20, 20),
+                QPointF(20, 20),
+                pixel,
+                angle,
+                Qt.MouseButton.NoButton,
+                Qt.KeyboardModifier.NoModifier,
+                Qt.ScrollPhase.ScrollUpdate,
+                False,
+            )
+        )
+
+    wheel(QPoint(), QPoint())
+    wheel(QPoint(15, 0), QPoint(120, 0))
+    display.ZoomFactor.assert_not_called()
+    wheel(QPoint(0, 15), QPoint())
+    factor = display.ZoomFactor.call_args.args[0]
+    assert 1 < factor < 2
+    wheel(QPoint(0, 15), QPoint(0, 120))
+    assert 1 < display.ZoomFactor.call_args.args[0] < 2
+    wheel(QPoint(), QPoint(0, -120))
+    assert display.ZoomFactor.call_args.args[0] == pytest.approx(0.5)
+
+
+def test_escape_leaves_explicit_zoom_navigation(window: MainWindow) -> None:
+    window.actions["zoom"].trigger()
+    assert window.actions["zoom"].isChecked()
+    window._cancel_shortcut.activated.emit()
+    assert window.actions["orbit"].isChecked()
+    assert window.viewer.navigation_mode == "orbit"

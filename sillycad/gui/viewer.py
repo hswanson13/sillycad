@@ -120,9 +120,28 @@ class Viewer(qtViewer3d):
         self._on_left_release()
         self.cursor = "arrow"
 
+    @property
+    def cursor(self) -> str:
+        return self._current_cursor
+
+    @cursor.setter
+    def cursor(self, value: str) -> None:
+        if self._current_cursor != value:
+            self._current_cursor = value
+            cursor = self._available_cursors.get(value)
+            if cursor is None:
+                self.unsetCursor()
+            else:
+                self.setCursor(cursor)
+
     def wheelEvent(self, event: QWheelEvent) -> None:
+        delta = event.pixelDelta().y() or event.angleDelta().y()
+        if not delta:
+            event.ignore()
+            return
         self.stop_camera_animation()
-        super().wheelEvent(event)
+        self._display.ZoomFactor(2.0 ** (max(-480, min(480, delta)) / 120))
+        event.accept()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if (

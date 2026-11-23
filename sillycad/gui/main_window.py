@@ -158,6 +158,7 @@ class MainWindow(QMainWindow):
         self._cancel_shortcut = QShortcut(QKeySequence("Esc"), self)
         self._cancel_shortcut.activated.connect(self.cancel_plane_pick)
         self._cancel_shortcut.activated.connect(self._cancel_feature_panel)
+        self._cancel_shortcut.activated.connect(self._cancel_navigation)
         self.undo_stack.indexChanged.connect(self._history_changed)
         self._update_title()
 
@@ -402,6 +403,12 @@ class MainWindow(QMainWindow):
             self._picking_plane = False
             self.viewer.set_plane_pick(False)
             self.statusBar().showMessage("Ready")
+
+    def _cancel_navigation(self) -> None:
+        if self._sketch_mode is None and (
+            self.actions["pan"].isChecked() or self.actions["zoom"].isChecked()
+        ):
+            self.actions["orbit"].trigger()
 
     def look_at(self) -> None:
         """Look directly at the selected plane, flat face or sketch."""

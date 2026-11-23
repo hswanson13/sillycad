@@ -2,9 +2,9 @@
 
 # SillyCAD Progress
 
-**Where we are:** 🎉 M1–M5, sketching on faces, and U1–U6 are done. U7 holes and partial cosmetic thread support are implemented; comprehensive threading remains in progress. The headless suite has 123 passing tests; the native-window integration test passes separately.
+**Where we are:** 🎉 M1–M5, sketching on faces, and U1–U6 are done. U7 holes and partial cosmetic thread support are implemented; comprehensive threading remains in progress. U8 live dimensions and U9 navigation/thread-display fixes are done. The headless suite has 429 passing tests; the native-window integration test passes separately.
 
-**Needs you:** try the U7 workflow below and review the threading limitations before relying on it for a design.
+**Needs you:** try the U9 workflow below and review the threading limitations before relying on it for a design.
 
 Legend: ✅ done · 🔨 in progress · ⬜ not started
 
@@ -155,7 +155,7 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 
 ## 🔨 U7: Holes and threads
 
-**You can now:** place and reposition holes by clicking planar faces or sketches and record cosmetic internal-thread metadata. Version-1 and version-2 files still load; saves use version 3 for face and coordinate placement.
+**You can now:** place and reposition holes by clicking planar faces or sketches and record cosmetic internal-thread metadata. Versions 1–3 still load; current saves use version 4.
 
 - [x] Simple blind/through holes, counterbore, spotface, and countersink; selected ISO 273 metric clearance presets.
 - [x] Cosmetic metadata for selected ISO metric, UNC/UNF/UNEF, NPT/NPTF, BSPP/BSPT, Tr and ACME sizes, plus custom size/pitch/taper; class text, handedness and depth persist through save, undo and edit.
@@ -177,9 +177,24 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 - [x] Arc sweep is an editable dimension in the solver and sketch UI. Format version 4 stores it; versions 1–3 still load.
 - [x] Ruff passes. The headless suite has 144 passed and one native test skipped; the expanded native-window test passes separately.
 
+## ✅ U9: Navigation recovery and thread-display stress
+
+- [x] Lost sketch mouse releases no longer leave zoom, orbit or other drags following the pointer; navigation cursors no longer accumulate application-wide overrides. Wheel events with no vertical movement no longer zoom, and small trackpad movements zoom proportionally.
+- [x] Escape leaves explicit Pan or Zoom mode in the 3D view. Existing sketch cancellation, navigation, previews and drawing remain available.
+- [x] Cosmetic thread linework has a per-feature and shared segment budget, clipped to body bounds and sampled in representative patches along long bores. Only viewport illustration changes; thread metadata, model geometry and STL do not.
+- [x] All 229 catalog entries, 32 combinations of hole style, extent, direction and handedness, later cuts, and the shared linework budget have regression coverage. The native test repeatedly switches thread families, including invalid and tapered choices, edits a 500 mm fine-pitch hole among twelve threaded holes, and exercises cancel, undo and redo.
+- [x] On the test machine, rendering linework for twelve 500 mm threaded holes fell from 4.2 s to about 0.3 s; ten native live-preview changes had a 0.411 s median. These are measurements, not performance guarantees. Complex Boolean recomputations can still take time.
+- [x] Ruff passes. The full headless suite has 429 passed and one native test skipped; the native-window test passes separately.
+
 ---
 
 ## How to try it
+
+### U9
+
+1. Save any open work, restart the application, and open a part. Try wheel zoom, right-drag zoom and middle-drag pan in the 3D view and while sketching. Choose Zoom on the navigation bar, then press `Esc` to return to Orbit (in a sketch, `Esc` returns to Select).
+2. Make a long hole, enable **Cosmetic thread**, and change the size or family. Long or fine-pitch bores show representative thread patches rather than every turn. Try an invalid or tapered choice and check the Property Panel for its error or required settings.
+3. Use Cancel, reopen the hole, then try OK and undo/redo. A tapered pipe thread needs a simple hole, an appropriate entrance diameter and an explicit thread depth. Threading remains cosmetic and only partially covers modern standards.
 
 ### U8
 
@@ -283,7 +298,7 @@ python -m sillycad
 | Join (Pad) / Cut (Pocket) | `P` / `O` | Revolve | `R` |
 | Zoom All | `F` / `Home` | Home view | `0` / `F6` |
 | Front / Top / Right | `1` / `2` / `3` | Shaded / Wireframe | `S` / `W` |
-| Cancel plane selection | `Esc` / right-click | Marking menu | right-click viewport |
+| Cancel plane selection / leave Pan or Zoom | `Esc` (plane pick also right-click) | Marking menu | right-click viewport |
 
 For current sketch controls, see the table in the README. The M1–M5 walkthroughs below describe the historical UI and are superseded by U4 where they differ.
 

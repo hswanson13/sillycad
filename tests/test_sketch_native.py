@@ -9,17 +9,17 @@ import pytest
 from OCC.Core.TopAbs import TopAbs_FACE
 from OCC.Core.TopExp import TopExp_Explorer
 from OCC.Core.TopoDS import topods
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
-from PySide6.QtGui import QFont, QImage, QPainter, QWheelEvent
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QTimer
+from PySide6.QtGui import QFont, QImage, QMouseEvent, QPainter, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog
 
 from sillycad.core.document import Document
-from sillycad.core.features import Hole, Pad, Pocket, Revolve, SketchFeature
+from sillycad.core.features import Feature, Hole, Pad, Pocket, Revolve, SketchFeature
 from sillycad.core.fileio import load, save
 from sillycad.core.geometry import Placement, face_placement, volume
 from sillycad.core.sketch import ORIGIN, Arc, Circle, Line, Point, Sketch
-from sillycad.core.threads import ThreadSpec
+from sillycad.core.threads import THREAD_FAMILIES, ThreadSpec
 from sillycad.gui import theme
 from sillycad.gui.hole_panel import HolePanel
 from sillycad.gui.main_window import UI_FONTS, MainWindow
@@ -505,6 +505,8 @@ def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         exercise_click_hole_placement(window, tmp_path)
         exercise_cosmetic_thread_display(window, tmp_path)
         exercise_live_drawing_dimensions(window, tmp_path)
+        exercise_navigation_recovery(window, app)
+        exercise_long_thread_stress(window, app)
     finally:
         if window._sketch_mode is not None:
             window._sketch_mode.session.undo_stack.setClean()
@@ -512,6 +514,171 @@ def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         window.undo_stack.setClean()
         window.close()
         app.processEvents()
+
+
+def exercise_navigation_recovery(window: MainWindow, app: QApplication) -> None:
+    """Lost mouse releases must not leave the camera following the cursor."""
+    base = Sketch()
+    add_rectangle(base, (0, 0), (40, 20))
+    window._set_document(
+        Document([SketchFeature("f1", "Base", sketch=base), Pad("f2", "Block", "f1")]), None
+    )
+    window._start_sketch("XY", 10, None)
+    QTest.qWait(550)
+    window.viewer.stop_camera_animation()
+    mode = window._sketch_mode
+    assert mode is not None
+    center = window.viewer.rect().center()
+    start = QPointF(center)
+    end = QPointF(center + QPoint(70, 50))
+    app.sendEvent(
+        window.viewer,
+        QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            start,
+            QPointF(window.viewer.mapToGlobal(center)),
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.RightButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+    assert mode.interaction._right is not None
+    scale = window.viewer._display.View.Camera().Scale()
+    app.sendEvent(
+        window.viewer,
+        QMouseEvent(
+            QEvent.Type.MouseMove,
+            end,
+            QPointF(window.viewer.mapToGlobal(end.toPoint())),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+    assert mode.interaction._right is None
+    assert window.viewer._display.View.Camera().Scale() == pytest.approx(scale)
+
+    mode.session.edit("Point", lambda sketch: sketch.add_point(12, 8))
+    point = next(g for g in mode.session.sketch.geo.values() if isinstance(g, Point))
+    start = mode.scene.screen((12, 8))
+    end = mode.scene.screen((15, 11))
+    QTest.mousePress(window.viewer, Qt.MouseButton.LeftButton, pos=start.toPoint())
+    drag_count = mode.session.undo_stack.count()
+    app.sendEvent(
+        window.viewer,
+        QMouseEvent(
+            QEvent.Type.MouseMove,
+            end,
+            QPointF(window.viewer.mapToGlobal(end.toPoint())),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+    assert mode.interaction._before is not None
+    app.sendEvent(
+        window.viewer,
+        QMouseEvent(
+            QEvent.Type.MouseMove,
+            end + QPointF(1, 1),
+            QPointF(window.viewer.mapToGlobal(end.toPoint() + QPoint(1, 1))),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+    assert mode.interaction._press is None and mode.interaction._before is None
+    assert mode.session.undo_stack.count() == drag_count + 1
+    QTest.mouseRelease(window.viewer, Qt.MouseButton.LeftButton, pos=end.toPoint())
+    mode.session.undo_stack.undo()
+    assert mode.session.sketch.point(point.id) == pytest.approx((12, 8))
+    mode.session.undo_stack.redo()
+    assert mode.session.sketch.point(point.id) != pytest.approx((12, 8))
+    window.actions["zoom"].trigger()
+    mode.interaction.escape()
+    assert not window.actions["zoom"].isChecked()
+    mode.session.undo_stack.setClean()
+    mode.cancel()
+    window.actions["zoom"].trigger()
+    window._cancel_shortcut.activated.emit()
+    assert window.actions["orbit"].isChecked()
+
+
+def exercise_long_thread_stress(window: MainWindow, app: QApplication) -> None:
+    """Switch thread families and edit a fine-pitch, long hole in a busy native viewport."""
+    base = Sketch()
+    add_rectangle(base, (0, 0), (240, 40))
+    features: list[Feature] = [
+        SketchFeature("f1", "Base", sketch=base),
+        Pad("f2", "Block", "f1", length=500),
+    ]
+    for index in range(12):
+        features.append(
+            Hole(
+                f"h{index}",
+                f"Hole{index}",
+                "",
+                diameter=5,
+                length=500,
+                face=Placement((0, 0, 500), (0, 0, 1), (1, 0, 0)),
+                center=(10 + 17 * index, 20),
+                thread=ThreadSpec("ISO metric", "M6 x 1"),
+            )
+        )
+    window._set_document(Document(features, 15), None)
+    assert not window.model.errors
+    window.edit_feature("h11")
+    panel = window._feature_panel
+    assert isinstance(panel, HolePanel)
+    ticks: list[bool] = []
+    timer = QTimer()
+    timer.setInterval(1)
+    timer.timeout.connect(lambda: ticks.append(True))
+    timer.start()
+    for family in THREAD_FAMILIES:
+        panel.thread.family.setCurrentText(family)
+        if family != "Custom":
+            panel.thread.designation.setCurrentIndex(panel.thread.designation.count() - 1)
+        QTest.qWait(2)
+        assert window._feature_panel is panel
+    assert ticks
+    timer.stop()
+
+    panel.thread.family.setCurrentText("NPT")
+    assert "explicit thread depth" in panel.message.text()
+    panel.thread.full_depth.setChecked(False)
+    panel.thread.depth.setValue(20)
+    assert not panel.message.text()
+    panel.thread.family.setCurrentText("Custom")
+    assert "designation" in panel.message.text()
+    panel.thread.custom_designation.setText("Fine")
+    panel.thread.major.setValue(5)
+    panel.thread.pitch.setValue(0.001)
+    panel.thread.full_depth.setChecked(True)
+    panel.thread.left_hand.setChecked(True)
+    assert not panel.message.text()
+    panel.ok.click()
+    hole = window.doc.find("h11")
+    assert isinstance(hole, Hole) and hole.thread is not None
+    assert hole.thread.family == "Custom" and hole.thread.custom_pitch == pytest.approx(0.001)
+    assert not window.model.errors
+    window.undo_stack.undo()
+    restored = window.doc.find("h11")
+    assert isinstance(restored, Hole) and restored.thread is not None
+    assert restored.thread.family == "ISO metric"
+    window.undo_stack.redo()
+    assert not window.model.errors
+    for _ in range(5):
+        window.edit_feature("h11")
+        panel = window._feature_panel
+        assert isinstance(panel, HolePanel)
+        panel.thread.family.setCurrentText("NPT")
+        assert "explicit thread depth" in panel.message.text()
+        panel.cancel.click()
+        assert window._feature_panel is None and not window.model.errors
+        app.processEvents()
+    assert app.overrideCursor() is None
+    app.processEvents()
 
 
 def exercise_hole_panel(window: MainWindow, tmp_path: Path, app: QApplication) -> None:

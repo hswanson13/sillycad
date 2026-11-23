@@ -3,15 +3,17 @@
 import os
 from collections.abc import Iterator
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QObject, QPoint, QPointF, Signal
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, Signal
+from PySide6.QtGui import QCloseEvent, QMouseEvent
 from PySide6.QtWidgets import QApplication, QWidget
 
 from sillycad.core.features import SketchFeature
 from sillycad.core.sketch import Line
 from sillycad.gui.main_window import MainWindow
+from sillycad.gui.sketch_interaction import SketchInteraction
 from sillycad.sketch_math import add_rectangle
 
 
@@ -187,6 +189,53 @@ def test_sketch_navigation_and_construction_state(window: MainWindow) -> None:
     assert not mode.actions["construction"].isChecked()
     mode.actions["finish"].trigger()
     assert window.actions["pan"].isChecked()
+
+
+@pytest.mark.parametrize(
+    ("button", "modifiers", "navigation", "display_action"),
+    [
+        (Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, None, "DynamicZoom"),
+        (Qt.MouseButton.MiddleButton, Qt.KeyboardModifier.ShiftModifier, None, "Rotation"),
+        (Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, "zoom", "DynamicZoom"),
+    ],
+)
+def test_sketch_recovers_from_a_lost_navigation_release(
+    app: QApplication,
+    button: Qt.MouseButton,
+    modifiers: Qt.KeyboardModifier,
+    navigation: str | None,
+    display_action: str,
+) -> None:
+    parent = QWidget()
+    viewer = FakeViewer(parent)
+    viewer._display = Mock()
+    viewer._display.Context.HasDetected.return_value = False
+    scene = Mock()
+    scene.viewer = viewer
+    scene.to_sketch.return_value = (0.0, 0.0)
+    scene.pick.return_value = None
+    scene.snap.return_value = ((0.0, 0.0), None)
+    scene.hover = None
+    scene._snap_target = None
+    interaction = SketchInteraction(scene)
+    if navigation:
+        interaction.set_navigation(navigation)
+    press = QMouseEvent(
+        QEvent.Type.MouseButtonPress, QPointF(20, 20), QPointF(20, 20), button, button, modifiers
+    )
+    move = QMouseEvent(
+        QEvent.Type.MouseMove,
+        QPointF(80, 80),
+        QPointF(80, 80),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    interaction._mouse_press(press)
+    interaction._mouse_move(move)
+    getattr(viewer._display, display_action).assert_not_called()
+    assert interaction._right is None and not interaction._orbiting and interaction._press is None
+    interaction.close()
 
 
 def test_redundant_constraint_feedback(window: MainWindow) -> None:

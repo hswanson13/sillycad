@@ -281,6 +281,37 @@ def test_tapered_thread_requires_explicit_depth_in_hole_panel(window: MainWindow
     assert not window.model.errors
 
 
+def test_tapered_choice_on_countersink_reports_errors_and_can_be_corrected(
+    window: MainWindow,
+) -> None:
+    base = SketchFeature("f1", "Base", sketch=rectangle(0, 0, 40, 20))
+    hole = Hole(
+        "f3",
+        "Hole",
+        "",
+        diameter=6,
+        through_all=True,
+        style="countersink",
+        head_diameter=10,
+        face=Placement((0, 0, 10), (0, 0, 1), (1, 0, 0)),
+        center=(10, 10),
+        thread=ThreadSpec("ISO metric", "M6 x 1"),
+    )
+    window._set_document(Document([base, Pad("f2", "Block", "f1"), hole], 4), None)
+    window.edit_feature("f3")
+    panel = window._feature_panel
+    assert isinstance(panel, HolePanel)
+    panel.thread.family.setCurrentText("NPT")
+    assert "explicit thread depth" in panel.message.text()
+    panel.thread.full_depth.setChecked(False)
+    assert "simple hole" in panel.message.text()
+    panel.style.setCurrentIndex(panel.style.findData("simple"))
+    assert not panel.message.text()
+    panel.cancel.click()
+    assert window.doc.find("f3") == hole
+    assert not window.model.errors
+
+
 def test_custom_thread_editor_preserves_precision(app: QApplication) -> None:
     spec = ThreadSpec(
         "Custom",

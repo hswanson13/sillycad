@@ -145,7 +145,11 @@ class SketchInteraction(QObject):
             if event.type() == QEvent.Type.MouseButtonRelease:
                 self._passing = False
                 self._grid_timer.start()
-            return False
+                return False
+            if event.type() != QEvent.Type.MouseMove or event.buttons() & Qt.MouseButton.LeftButton:
+                return False
+            self._passing = False
+            self._grid_timer.start()
         try:
             if event.type() == QEvent.Type.MouseButtonPress:
                 return self._mouse_press(event)
@@ -243,6 +247,21 @@ class SketchInteraction(QObject):
     def _mouse_move(self, event: QMouseEvent) -> bool:
         pos = event.position()
         self._cursor_pos = pos
+        buttons = event.buttons()
+        if self._right is not None and not buttons & Qt.MouseButton.RightButton:
+            self._right = None
+            self._right_dragged = False
+        if self._orbiting and not buttons & Qt.MouseButton.MiddleButton:
+            self._orbiting = False
+        if self._press is not None and not buttons & Qt.MouseButton.LeftButton:
+            if self._before is not None:
+                self.session.finish_drag(self._before)
+                self._before = None
+            self._press = None
+        if self._rectangle is not None and not buttons & Qt.MouseButton.LeftButton:
+            if self._rectangle_press is not None:
+                self._rectangle_waiting = True
+                self._rectangle_press = None
         if self._orbiting:
             self.viewer._display.Rotation(round(pos.x()), round(pos.y()))
             self._grid_timer.start()

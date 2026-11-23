@@ -30,6 +30,7 @@ python -m sillycad
 | Orbit | Left-drag, or choose Orbit on the navigation bar |
 | Pan | Middle-drag, or choose Pan and left-drag |
 | Zoom | Wheel / right-drag, or choose Zoom and left-drag |
+| Leave Pan / Zoom mode | `Esc` or choose Orbit |
 | Fit all | `F` / `Home` |
 | Home view (isometric + fit) | `0` / `F6` |
 | Wireframe / shaded | `W` / `S` |
@@ -74,6 +75,8 @@ Choose the diameter, **Distance** or **Through All**, direction, and a simple, c
 Check **Cosmetic thread** to record a thread family, size, optional class text, handedness, and full or specified depth. For a recessed hole, the thread depth starts below the counterbore, spotface, or countersink. For example, choose **ISO metric → M6 x 1**, enter a 5 mm hole diameter, and optionally enter `6H` as the class. The diameter is not chosen automatically: use the appropriate bore for your design. To add metadata to an existing circular Cut, double-click the Cut in the browser and enable Cosmetic thread in its panel; its sketch must contain exactly one non-construction circle and no other non-construction curves.
 
 **Important limitations:** this is a partial thread implementation, not comprehensive modern-CAD threading. Thread metadata is shown as illustrative strokes on surviving bore walls in the viewport, including while editing a sketch; it is not helical solid geometry, a thread texture or a dimensional callout. STL contains only the bore. The strokes use bounded sampling and are not an engineering representation of the thread profile. Thread classes are unvalidated text; the diameter check is only a rough compatibility check, not a tolerance or tap-drill calculation. The catalog contains selected sizes, not complete standards: ISO metric M1–M64; selected UNC/UNF/UNEF up to 1 inch; NPT/NPTF 1/16–2 inch; selected BSPP/BSPT 1/16–6 inch; six Tr and three ACME sizes. ISO 273 clearance presets cover M3–M16 selected sizes; inch clearances must be entered manually. A Custom thread stores a name, major diameter, pitch, and diametral taper, but not a full thread profile or multi-start definition. External threads, modeled threads, class-specific tolerances, tap-drill recommendations, and a complete standard catalog are not implemented.
+
+Long or fine-pitch threads show separated representative patches rather than every turn. A shared viewport budget reduces detail when there are many threaded features; exceptionally large numbers of threads may have strokes omitted, with a warning in the application log. These limits affect the illustration only, not thread metadata or the solid. Complex solid recomputations still run synchronously and may take time.
 
 NPT, NPTF, BSPT and tapered custom threads require a **simple Hole** with an explicit thread depth and user-specified entrance diameter. The bore tapers by the selected diametral taper for that depth and continues cylindrically at the smaller diameter. Pipe nominal sizes are not bore diameters; pipe entrance diameter and gauge-plane, engagement, sealing, and class requirements are **not verified**. A tapered thread cannot be attached to a cylindrical Cut. Through-all thread depth is checked against the cutter length, not measured material thickness. Verify all thread and clearance choices against the current governing standards and manufacturing requirements.
 
