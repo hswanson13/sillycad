@@ -507,7 +507,7 @@ def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         exercise_live_drawing_dimensions(window, tmp_path)
         exercise_navigation_recovery(window, app)
         exercise_long_thread_stress(window, app)
-        exercise_closed_circle_with_open_guide(window)
+        exercise_closed_circle_with_open_guide(window, tmp_path)
     finally:
         if window._sketch_mode is not None:
             window._sketch_mode.session.undo_stack.setClean()
@@ -517,7 +517,7 @@ def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         app.processEvents()
 
 
-def exercise_closed_circle_with_open_guide(window: MainWindow) -> None:
+def exercise_closed_circle_with_open_guide(window: MainWindow, tmp_path: Path) -> None:
     """Extrude a large face circle while retaining its guide and solver constraints."""
     base = Sketch()
     add_rectangle(base, (0, 0), (40, 20))
@@ -550,7 +550,18 @@ def exercise_closed_circle_with_open_guide(window: MainWindow) -> None:
     window.actions["extrude"].trigger()
     panel = window._feature_panel
     assert panel is not None
-    assert panel.feature.sketch_id == "f4" and "open" in panel.message.text().lower()
+    assert panel.feature.sketch_id == "f4" and "open" in panel.profile_notice.text().lower()
+    assert "click ok" in panel.profile_notice.text().lower() and not panel.message.text()
+    QTest.qWait(100)
+    assert panel.profile_notice.isVisible()
+    assert panel.profile_notice.height() >= panel.profile_notice.sizeHint().height()
+    viewport_path = tmp_path / "open-guide-viewport.png"
+    assert window.viewer._display.View.Dump(str(viewport_path))
+    image = window.grab().toImage()
+    painter = QPainter(image)
+    painter.drawImage(window.viewer.mapTo(window, QPoint()), QImage(str(viewport_path)))
+    painter.end()
+    assert image.save(str(tmp_path / "open-guide-notice.png"))
     panel.ok.click()
     assert not window.model.errors
     assert volume(window.model.shape) == pytest.approx(before + math.pi * 100**2 * 10)

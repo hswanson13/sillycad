@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication, QToolButton, QWidget
 from sillycad.core.document import Document
 from sillycad.core.features import Hole, Pad, Pocket, Revolve, SketchFeature
 from sillycad.core.geometry import Placement, volume
+from sillycad.core.profiles import ProfileError
 from sillycad.core.sketch import Circle, Sketch
 from sillycad.core.threads import ThreadSpec
 from sillycad.gui.hole_panel import HolePanel
@@ -484,6 +485,8 @@ def test_symmetric_join_and_invalid_feature_feedback(window: MainWindow) -> None
     assert isinstance(panel.feature, Pocket)
     assert panel.direction.findData("symmetric") == -1
     assert "first solid" in panel.message.text()
+    assert panel.message.objectName() == "errorLabel"
+    assert not panel.profile_notice.text()
     panel.ok.click()
     assert window.model.errors
     assert "failed" in window.statusBar().currentMessage()
@@ -523,6 +526,7 @@ def test_unique_closed_profile_and_external_undo(window: MainWindow) -> None:
     window.add_solid(Pad)
     assert window._feature_panel.feature.sketch_id == "f2"
     assert window._feature_panel.message.text()
+    assert not window._feature_panel.profile_notice.text()
     window.actions["redo"].trigger()
     assert window._feature_panel is None
     assert window.doc.find("f2").name == "Renamed"
@@ -545,8 +549,23 @@ def test_extrude_defaults_to_new_circle_with_open_guide_and_warns(window: MainWi
     panel = window._feature_panel
     assert isinstance(panel, FeaturePanel)
     assert panel.feature.sketch_id == "f3"
-    assert "open" in panel.message.text().lower()
+    assert not panel.message.text()
+    assert panel.ok.isEnabled()
+    assert panel.profile_notice.objectName() == "hintLabel"
+    assert "open" in panel.profile_notice.text().lower()
+    assert "click ok" in panel.profile_notice.text().lower()
     assert volume(window.viewer.shape) == pytest.approx(8000 + 100000 * 3.141592653589793)
+    panel.cut.click()
+    panel.thread.setChecked(True)
+    assert "incompatible" in panel.message.text().lower()
+    assert not panel.profile_notice.text()
+    panel.thread.setChecked(False)
+    assert not panel.message.text() and panel.profile_notice.text()
+    panel.join.click()
+    panel.sketch.setCurrentIndex(panel.sketch.findData("f1"))
+    assert not panel.message.text() and not panel.profile_notice.text()
+    panel.sketch.setCurrentIndex(panel.sketch.findData("f3"))
+    assert "click ok" in panel.profile_notice.text().lower()
     panel.ok.click()
     assert not window.model.errors
     assert window.doc.find("f3").sketch == sketch
@@ -554,6 +573,31 @@ def test_extrude_defaults_to_new_circle_with_open_guide_and_warns(window: MainWi
     assert window.doc.find("f3").sketch == sketch
     window.undo_stack.redo()
     assert not window.model.errors
+
+
+def test_profile_analysis_failure_remains_an_error(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sketch = rectangle(0, 0, 40, 20)
+    sketch.add_line(5, 5, 10, 5)
+    window._set_document(Document([SketchFeature("f1", "Sketch", sketch=sketch)], 2), None)
+    window.add_solid(Pad)
+    panel = window._feature_panel
+    assert isinstance(panel, FeaturePanel) and panel.profile_notice.text()
+
+    def fail_analysis(_sketch: Sketch) -> None:
+        raise ProfileError("Profile analysis failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("sillycad.gui.property_panel.analyze_profiles", fail_analysis)
+        panel._profile_warnings.clear()
+        panel.length.setValue(11)
+        assert "profile analysis failed" in panel.message.text().lower()
+        assert not panel.profile_notice.text()
+
+    panel.length.setValue(12)
+    assert not panel.message.text()
+    assert "click ok" in panel.profile_notice.text().lower()
 
 
 def test_close_cancel_keeps_active_panel(

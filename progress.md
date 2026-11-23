@@ -189,6 +189,7 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 ## ✅ U10: Closed profiles with open guides
 
 - [x] An independent open curve no longer prevents a closed profile from being extruded or revolved. The sketch and feature panel warn that it is excluded; its geometry and constraints are retained.
+- [x] The feature panel distinguishes an informational open-guide notice from a preview error and explicitly says when OK can be used to continue.
 - [x] Crossings or touches (except adjacent endpoints), branching and an open-only sketch still produce profile errors. There is no individual-region selection yet; all eligible closed profiles are used.
 - [x] Threaded circular Cuts use the same profile rules and retain their cosmetic strokes. The existing unique-profile/default-sketch selection now recognizes a closed circle alongside an open guide.
 - [x] Tested a 100 mm radius circle centered on an open line by a midpoint constraint on the side of a holed block. Extrusion volume, radius edits, solver state, undo/redo and threaded Cuts have headless and native regression coverage.
@@ -202,7 +203,7 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 ### U10
 
 1. Restart SillyCAD and open the saved part. Select **Sketch2** if necessary, choose **Extrude** (`E`), and use **Join** with the desired distance. The 100 mm radius circle can extend past the supporting face as long as the result is connected.
-2. The warning notes that the open guide line is not included in the solid. To remove the warning, edit the sketch, select the line and press `G` for Construction; the midpoint and radius constraints remain. Use Finish Sketch, then extrude again.
+2. The notice confirms the preview is ready and the open guide line will stay in the sketch, but will not form the solid. Click **OK** to continue. To remove the notice, edit the sketch, select the line and press `G` for Construction; the midpoint and radius constraints remain. Use Finish Sketch, then extrude again.
 3. Double-click the circle's radius dimension to change it, then use undo/redo. The guide and circle may still move unless separately constrained; face-outline snaps are positional rather than linked to the body.
 
 ### U9

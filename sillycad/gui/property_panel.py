@@ -155,6 +155,11 @@ class FeaturePanel(QWidget):
         self.message.setWordWrap(True)
         self.message.setObjectName("errorLabel")
         layout.addWidget(self.message)
+        self.profile_notice = QLabel()
+        self.profile_notice.setWordWrap(True)
+        self.profile_notice.setObjectName("hintLabel")
+        self.profile_notice.hide()
+        layout.addWidget(self.profile_notice)
         layout.addStretch()
 
         buttons = QHBoxLayout()
@@ -272,9 +277,13 @@ class FeaturePanel(QWidget):
             try:
                 self._profile_warnings[sketch_id] = analyze_profiles(sketch.sketch).warning()
             except ProfileError as exc:
-                self._profile_warnings[sketch_id] = str(exc)
-        message = error or self._profile_warnings.get(sketch_id, "")
-        self.message.setText(f"⚠ {message}" if message else "")
+                error = str(exc)
+        notice = self._profile_warnings.get(sketch_id, "") if not error else ""
+        self.message.setText(f"⚠ {error}" if error else "")
+        self.profile_notice.setText(
+            f"Preview ready. {notice} Click OK to continue." if notice else ""
+        )
+        self.profile_notice.setVisible(bool(notice))
 
     def _current_feature(self) -> Pad | Pocket | Revolve:
         if isinstance(self.feature, Pad | Pocket):

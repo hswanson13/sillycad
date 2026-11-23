@@ -47,8 +47,9 @@ class ProfileAnalysis:
         if not count:
             return ""
         return (
-            f"{count} open curve{'s' if count != 1 else ''} not included in the profile. "
-            "Make guides construction geometry or close them."
+            f"{count} open curve{'s' if count != 1 else ''} "
+            f"{'remain' if count != 1 else 'remains'} in the sketch and will not form the solid. "
+            "Constraints are unchanged; guides can be marked as construction."
         )
 
 
