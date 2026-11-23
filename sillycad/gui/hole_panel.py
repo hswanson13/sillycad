@@ -1,4 +1,4 @@
-"""Docked controls for a sketch-point hole and its cosmetic thread."""
+"""Docked controls for hole placement and cosmetic threads."""
 
 import copy
 from collections.abc import Callable
@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
+    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -19,7 +20,8 @@ from PySide6.QtWidgets import (
 )
 
 from sillycad.core.features import Hole, SketchFeature
-from sillycad.core.sketch import ORIGIN, Point
+from sillycad.core.geometry import Placement
+from sillycad.core.sketch import ORIGIN, XY, Point
 from sillycad.core.threads import CLEARANCE_FITS, CLEARANCES, clearance_diameter
 from sillycad.gui.property_panel import _number_box
 from sillycad.gui.thread_editor import ThreadEditor
@@ -49,6 +51,8 @@ class HolePanel(QWidget):
         self.editing = editing
         self._preview = preview
         self._sketches = {sketch.id: sketch for sketch in sketches}
+        self._face = feature.face
+        self._has_center = feature.center is not None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         self.title = QLabel(feature.name)
@@ -63,6 +67,7 @@ class HolePanel(QWidget):
         placement = QGroupBox("Placement")
         form = QFormLayout(placement)
         self.sketch = QComboBox()
+        self.sketch.addItem("Click a face in the viewport", "")
         for sketch in sketches:
             self.sketch.addItem(sketch.name, sketch.id)
         index = self.sketch.findData(feature.sketch_id)
@@ -71,9 +76,23 @@ class HolePanel(QWidget):
             index = self.sketch.count() - 1
         self.sketch.setCurrentIndex(index)
         self.point = QComboBox()
-        self._fill_points(feature.point_id)
+        self._fill_points(
+            "" if feature.center is not None or not feature.sketch_id else feature.point_id
+        )
+        self.x = QDoubleSpinBox()
+        self.y = QDoubleSpinBox()
+        for box, value in zip((self.x, self.y), feature.center or (0.0, 0.0), strict=True):
+            box.setDecimals(5)
+            box.setRange(-100000, 100000)
+            box.setSuffix(" mm")
+            box.setValue(value)
+        hint = QLabel("Click a face or a position on the selected sketch to move the hole.")
+        hint.setWordWrap(True)
+        form.addRow(hint)
         form.addRow("Sketch", self.sketch)
         form.addRow("Center", self.point)
+        form.addRow("Center X", self.x)
+        form.addRow("Center Y", self.y)
         fields.addWidget(placement)
         hole = QGroupBox("Hole")
         form = QFormLayout(hole)
@@ -163,10 +182,14 @@ class HolePanel(QWidget):
         self.cancel.clicked.connect(self.cancelled)
         shortcut = QShortcut(self)
         shortcut.setKeys([QKeySequence("Ctrl+Return"), QKeySequence("Ctrl+Enter")])
-        shortcut.activated.connect(lambda: self.accepted.emit(self._current_feature()))
+        shortcut.activated.connect(self._accept_if_placed)
         self.sketch.currentIndexChanged.connect(self._sketch_changed)
+        self.point.currentIndexChanged.connect(self._changed)
+        self.x.valueChanged.connect(self._coordinates_changed)
+        self.y.valueChanged.connect(self._coordinates_changed)
+        self.x.lineEdit().textEdited.connect(self._coordinates_changed)
+        self.y.lineEdit().textEdited.connect(self._coordinates_changed)
         for combo in (
-            self.point,
             self.style,
             self.clearance,
             self.fit,
@@ -182,12 +205,15 @@ class HolePanel(QWidget):
     def _fill_points(self, current: str) -> None:
         self.point.blockSignals(True)
         self.point.clear()
-        self.point.addItem("Sketch origin", ORIGIN)
         sketch = self._sketches.get(self.sketch.currentData())
         if sketch is not None:
+            self.point.addItem("Click / enter coordinates", "")
+            self.point.addItem("Sketch origin", ORIGIN)
             for point in sketch.sketch.geo.values():
                 if isinstance(point, Point):
                     self.point.addItem(f"{point.id} ({point.x:g}, {point.y:g})", point.id)
+        else:
+            self.point.addItem("Click a face", "")
         index = self.point.findData(current)
         if index < 0:
             self.point.addItem(f"Missing point: {current}", current)
@@ -196,7 +222,27 @@ class HolePanel(QWidget):
         self.point.blockSignals(False)
 
     def _sketch_changed(self) -> None:
-        self._fill_points(ORIGIN)
+        self._face = None
+        self._has_center = False
+        self._fill_points("")
+        self._changed()
+
+    def _coordinates_changed(self) -> None:
+        self._has_center = True
+        self._changed()
+
+    def set_position(self, face: Placement | None, xy: XY, point_id: str | None = None) -> None:
+        """Set a picked position, optionally linking it to a sketch point."""
+        self._face = face
+        self._has_center = True
+        for box, value in zip((self.x, self.y), xy, strict=True):
+            box.blockSignals(True)
+            box.setValue(value)
+            box.blockSignals(False)
+        self.point.blockSignals(True)
+        index = self.point.findData(point_id if point_id is not None else "")
+        self.point.setCurrentIndex(max(index, 0))
+        self.point.blockSignals(False)
         self._changed()
 
     def _changed(self) -> None:
@@ -213,10 +259,17 @@ class HolePanel(QWidget):
         self.head_diameter.setEnabled(style != "simple")
         self.head_depth.setEnabled(style in ("counterbore", "spotface"))
         self.angle.setEnabled(style == "countersink")
+        free = not self.point.currentData()
+        self.point.setEnabled(bool(self.sketch.currentData()))
+        self.x.setEnabled(free)
+        self.y.setEnabled(free)
+        center = (self.x.value(), self.y.value()) if free and self._has_center else None
         self.feature = replace(
             self.feature,
             sketch_id=self.sketch.currentData(),
             point_id=self.point.currentData(),
+            face=self._face if not self.sketch.currentData() else None,
+            center=center,
             style=style,
             clearance_size=size,
             clearance_fit=fit,
@@ -231,9 +284,27 @@ class HolePanel(QWidget):
         )
         error = self._preview(copy.deepcopy(self.feature))
         self.message.setText(f"⚠ {error}" if error else "")
+        placed = (not free or center is not None) and (
+            bool(self.sketch.currentData()) or self._face is not None
+        )
+        self.ok.setEnabled(placed)
+        self.apply.setEnabled(placed)
+
+    def _accept_if_placed(self) -> None:
+        feature = self._current_feature()
+        if self.ok.isEnabled():
+            self.accepted.emit(feature)
 
     def _current_feature(self) -> Hole:
-        for number in (self.diameter, self.length, self.head_diameter, self.head_depth, self.angle):
+        for number in (
+            self.x,
+            self.y,
+            self.diameter,
+            self.length,
+            self.head_diameter,
+            self.head_depth,
+            self.angle,
+        ):
             number.interpretText()
         self._changed()
         return copy.deepcopy(self.feature)

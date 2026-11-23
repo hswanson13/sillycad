@@ -3,6 +3,7 @@
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import combinations
 from typing import Literal
 
 from sillycad.core.geometry import Placement
@@ -18,8 +19,9 @@ class SnapTarget:
     """A key point and the sketch reference, if any, that can constrain it."""
 
     point: XY
-    kind: Literal["point", "midpoint", "reference"]
+    kind: Literal["point", "midpoint", "intersection", "reference"]
     ref: str | None = None
+    ref2: str | None = None
 
 
 def snap_targets(sketch: Sketch, reference: Sequence[Sequence[XY]]) -> list[SnapTarget]:
@@ -34,6 +36,21 @@ def snap_targets(sketch: Sketch, reference: Sequence[Sequence[XY]]) -> list[Snap
         if isinstance(item, Line):
             a, b = sketch.line_points(item.id)
             targets.append(SnapTarget(((a[0] + b[0]) / 2, (a[1] + b[1]) / 2), "midpoint", item.id))
+    lines = [item for item in sketch.geo.values() if isinstance(item, Line)]
+    for first, second in combinations(lines, 2):
+        a, b = sketch.line_points(first.id)
+        c, d = sketch.line_points(second.id)
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        ex, ey = d[0] - c[0], d[1] - c[1]
+        determinant = dx * ey - dy * ex
+        if abs(determinant) < 1e-12:
+            continue
+        t = ((c[0] - a[0]) * ey - (c[1] - a[1]) * ex) / determinant
+        u = ((c[0] - a[0]) * dy - (c[1] - a[1]) * dx) / determinant
+        if 1e-9 < t < 1 - 1e-9 and 1e-9 < u < 1 - 1e-9:
+            targets.append(
+                SnapTarget((a[0] + t * dx, a[1] + t * dy), "intersection", first.id, second.id)
+            )
     for polyline in reference:
         if len(polyline) < 2:
             continue
@@ -50,6 +67,12 @@ def constrain_snap(sketch: Sketch, point: str, target: SnapTarget | None) -> Non
         return
     if target.ref is None:
         raise ValueError("The snap target has no sketch reference.")
+    if target.kind == "intersection":
+        if target.ref2 is None:
+            raise ValueError("The intersection has no second sketch reference.")
+        sketch.add_constraint("point_on_line", [point, target.ref])
+        sketch.add_constraint("point_on_line", [point, target.ref2])
+        return
     sketch.add_constraint(
         "coincident" if target.kind == "point" else "midpoint", [point, target.ref]
     )

@@ -8,13 +8,14 @@ import pytest
 from OCC.Core.TopAbs import TopAbs_FACE
 from OCC.Core.TopExp import TopExp_Explorer
 from OCC.Core.TopoDS import topods
-from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QFont, QImage, QPainter, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog
 
 from sillycad.core.document import Document
 from sillycad.core.features import Hole, Pad, Pocket, Revolve, SketchFeature
+from sillycad.core.fileio import load, save
 from sillycad.core.geometry import face_placement, volume
 from sillycad.core.sketch import ORIGIN, Arc, Circle, Line, Point, Sketch
 from sillycad.gui import theme
@@ -87,6 +88,23 @@ def exercise_key_point_snapping(window: MainWindow, tmp_path: Path) -> None:
     mode.actions["select"].trigger()
     assert mode.scene._snap_target is None
     assert "snap" not in mode.scene._objects
+
+    mode.session.edit(
+        "Crossing line", lambda sketch: sketch.add_line(18, 5, 18, 35, construction=True)
+    )
+    crossing = mode.scene.screen((18, 15)).toPoint()
+    QTest.mouseMove(window.viewer, crossing + QPoint(1, 1), delay=20)
+    target = mode.scene._snap_target
+    assert target is not None and target.kind == "intersection"
+    assert target.point == pytest.approx((18, 15))
+    assert "snap" in mode.scene._objects
+    mode.actions["point"].trigger()
+    QTest.mouseClick(window.viewer, Qt.MouseButton.LeftButton, pos=crossing + QPoint(1, 1))
+    intersection_constraints = [
+        c for c in mode.session.sketch.constraints.values() if c.kind == "point_on_line"
+    ]
+    assert len(intersection_constraints) == 2
+    assert intersection_constraints[0].refs[0] == intersection_constraints[1].refs[0]
 
     mode.actions["line"].trigger()
     QTest.mouseClick(
@@ -436,6 +454,9 @@ def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         assert len(window.doc.features) == 3
 
         sketch = window.doc.sketches()[-1]
+        window.activateWindow()
+        window.viewer.setFocus()
+        assert QTest.qWaitForWindowActive(window, 2000)
         QTest.keyClick(window.viewer, Qt.Key.Key_E)
         panel = window._feature_panel
         assert panel is not None
@@ -479,6 +500,7 @@ def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         exercise_key_point_snapping(window, tmp_path)
         exercise_line_inference(window, tmp_path)
         exercise_hole_panel(window, tmp_path, app)
+        exercise_click_hole_placement(window, tmp_path)
     finally:
         if window._sketch_mode is not None:
             window._sketch_mode.session.undo_stack.setClean()
@@ -518,6 +540,7 @@ def exercise_hole_panel(window: MainWindow, tmp_path: Path, app: QApplication) -
     window.actions["hole"].trigger()
     panel = window._feature_panel
     assert isinstance(panel, HolePanel)
+    panel.sketch.setCurrentIndex(panel.sketch.findData("f3"))
     panel.point.setCurrentIndex(panel.point.findData(point))
     panel.style.setCurrentIndex(panel.style.findData("counterbore"))
     panel.thread.setChecked(True)
@@ -538,6 +561,156 @@ def exercise_hole_panel(window: MainWindow, tmp_path: Path, app: QApplication) -
     assert volume(window.model.shape) < 24000
 
 
+def exercise_click_hole_placement(window: MainWindow, tmp_path: Path) -> None:
+    """Pick and move a hole on the body, including a sketch-line crossing."""
+    base = Sketch()
+    add_rectangle(base, (0, 0), (60, 40))
+    guides = Sketch()
+    guides.add_line(5, 20, 50, 20, construction=True)
+    guides.add_line(30, 5, 30, 37, construction=True)
+    guide_point = guides.add_point(60, 20)
+    window._set_document(
+        Document(
+            [
+                SketchFeature("f1", "Base", sketch=base),
+                Pad("f2", "Block", "f1"),
+                SketchFeature("f3", "Guides", "XY", 10, guides),
+            ],
+            4,
+        ),
+        None,
+    )
+    window.viewer.set_view("iso")
+    window.actions["hole"].trigger()
+    panel = window._feature_panel
+    assert isinstance(panel, HolePanel) and panel.feature.sketch_id == ""
+    assert not panel.ok.isEnabled()
+
+    def screen(x: float, y: float) -> QPoint:
+        sx, sy = window.viewer._display.View.Convert(x, y, 10.0)
+        return QPoint(sx, sy)
+
+    QTest.mouseMove(window.viewer, screen(30, 20) + QPoint(1, 1), delay=20)
+    assert window._hole_placement is not None
+    assert window._hole_placement._marker is not None
+    QTest.mouseClick(window.viewer, Qt.MouseButton.LeftButton, pos=screen(30, 20) + QPoint(1, 1))
+    assert panel.feature.center == pytest.approx((30, 20))
+    assert panel.feature.face is not None and not panel.message.text()
+    assert window.viewer._press_at is None
+    QTest.mouseMove(window.viewer, screen(60, 20), delay=20)
+    assert window._hole_placement._marker is not None
+    viewport_path = tmp_path / "hole-placement-viewport.png"
+    assert window.viewer._display.View.Dump(str(viewport_path))
+    image = window.grab().toImage()
+    painter = QPainter(image)
+    painter.drawImage(
+        window.viewer.mapTo(window, window.viewer.rect().topLeft()), QImage(str(viewport_path))
+    )
+    painter.end()
+    assert image.save(str(tmp_path / "hole-placement.png"))
+    QApplication.sendEvent(window.viewer, QEvent(QEvent.Type.Leave))
+    assert window._hole_placement._marker is None
+    QTest.mouseClick(window.viewer, Qt.MouseButton.LeftButton, pos=screen(18, 12))
+    assert panel.feature.center == pytest.approx((18, 12), abs=0.2)
+    assert not panel.message.text()
+    panel.ok.click()
+    hole = window.doc.find("f4")
+    assert isinstance(hole, Hole) and hole.center == pytest.approx((18, 12), abs=0.2)
+    assert not window.model.errors
+    path = tmp_path / "click-hole.sillycad"
+    save(window.doc, path)
+    assert load(path) == window.doc
+    window.edit_feature("f4")
+    panel = window._feature_panel
+    assert isinstance(panel, HolePanel)
+    QTest.mouseClick(window.viewer, Qt.MouseButton.LeftButton, pos=screen(42, 27))
+    assert panel.feature.center == pytest.approx((42, 27), abs=0.2)
+    panel.ok.click()
+    window.undo_stack.undo()
+    assert window.doc.find("f4").center == pytest.approx((18, 12), abs=0.2)
+    window.undo_stack.redo()
+    assert window.doc.find("f4").center == pytest.approx((42, 27), abs=0.2)
+
+    window.edit_feature("f4")
+    panel = window._feature_panel
+    assert isinstance(panel, HolePanel)
+    panel.sketch.setCurrentIndex(panel.sketch.findData("f3"))
+    assert not panel.ok.isEnabled()
+    QTest.mouseClick(window.viewer, Qt.MouseButton.LeftButton, pos=screen(60, 20))
+    assert panel.feature.point_id == guide_point and panel.feature.center is None
+    QTest.mouseClick(window.viewer, Qt.MouseButton.LeftButton, pos=screen(25, 12))
+    assert panel.feature.center == pytest.approx((25, 12), abs=0.2)
+    panel.cancel.click()
+    assert window.doc.find("f4").center == pytest.approx((42, 27), abs=0.2)
+
+    window.edit_feature("f4")
+    panel = window._feature_panel
+    assert isinstance(panel, HolePanel)
+    window.viewer.set_view("right")
+    sx, sy = window.viewer._display.View.Convert(60.0, 15.0, 5.0)
+    QTest.mouseClick(window.viewer, Qt.MouseButton.LeftButton, pos=QPoint(sx, sy))
+    assert panel.feature.face.normal == pytest.approx((1, 0, 0))
+    assert panel.feature.center == pytest.approx((15, 5), abs=0.2)
+    assert not panel.message.text()
+    before_navigation = panel.feature
+    center = window.viewer.rect().center()
+    view = window.viewer._display.View
+    scale = view.Camera().Scale()
+    wheel = QWheelEvent(
+        QPointF(center),
+        QPointF(window.viewer.mapToGlobal(center)),
+        QPoint(),
+        QPoint(0, 120),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.ScrollUpdate,
+        False,
+    )
+    QApplication.sendEvent(window.viewer, wheel)
+    assert view.Camera().Scale() != pytest.approx(scale)
+    assert panel.feature == before_navigation
+    direction = window.viewer._display.View.Camera().Direction()
+    previous_direction = direction.X(), direction.Y(), direction.Z()
+    QTest.mousePress(window.viewer, Qt.MouseButton.LeftButton, pos=center)
+    QTest.mouseMove(window.viewer, center + QPoint(40, 30), delay=20)
+    QTest.mouseRelease(window.viewer, Qt.MouseButton.LeftButton, pos=center + QPoint(40, 30))
+    direction = window.viewer._display.View.Camera().Direction()
+    assert (direction.X(), direction.Y(), direction.Z()) != pytest.approx(previous_direction)
+    assert panel.feature == before_navigation
+    context = window.viewer._display.Context
+    cube_position = None
+    for x in range(window.viewer.width() - 150, window.viewer.width() - 10, 5):
+        for y in range(10, 150, 5):
+            context.MoveTo(x, y, view, False)
+            if context.HasDetected() and context.DetectedOwner().IsKind("AIS_ViewCubeOwner"):
+                cube_position = QPoint(x, y)
+                break
+        if cube_position is not None:
+            break
+    assert cube_position is not None
+    QTest.mouseClick(window.viewer, Qt.MouseButton.LeftButton, pos=cube_position)
+    assert panel.feature == before_navigation
+    panel.cancel.click()
+    assert window.doc.find("f4").center == pytest.approx((42, 27), abs=0.2)
+
+    circle = Sketch()
+    circle.add_circle(0, 0, 10)
+    window._set_document(
+        Document([SketchFeature("f1", "Circle", sketch=circle), Pad("f2", "Cylinder", "f1")], 3),
+        None,
+    )
+    window.viewer.set_view("right")
+    window.actions["hole"].trigger()
+    panel = window._feature_panel
+    assert isinstance(panel, HolePanel)
+    sx, sy = window.viewer._display.View.Convert(10.0, 0.0, 5.0)
+    QTest.mouseClick(window.viewer, Qt.MouseButton.LeftButton, pos=QPoint(sx, sy))
+    assert "isn't flat" in window.statusBar().currentMessage()
+    assert not panel.ok.isEnabled()
+    panel.cancel.click()
+    assert len(window.doc.features) == 2
+
+
 def exercise_feature_panels(window: MainWindow) -> None:
     """Verify Apply, Undo and Revolve against the native 3D preview."""
     base = Sketch()
@@ -555,6 +728,9 @@ def exercise_feature_panels(window: MainWindow) -> None:
         ),
         None,
     )
+    window.activateWindow()
+    window.viewer.setFocus()
+    assert QTest.qWaitForWindowActive(window, 2000)
     QTest.keyClick(window.viewer, Qt.Key.Key_E)
     panel = window._feature_panel
     assert panel is not None
@@ -654,6 +830,9 @@ def exercise_drawing_tools(window: MainWindow) -> None:
 
     circle = next(item for item in geometry if isinstance(item, Circle))
     mode.session.set_selection([circle.id])
+    window.activateWindow()
+    window.viewer.setFocus()
+    assert QTest.qWaitForWindowActive(window, 2000)
     QTest.keyClick(window.viewer, Qt.Key.Key_G)
     assert mode.session.sketch.geo[circle.id].construction
     assert mode.actions["construction"].isChecked()

@@ -60,6 +60,7 @@ from sillycad.gui.browser import ModelBrowser
 from sillycad.gui.commands import SnapshotCommand, redo_shortcuts
 from sillycad.gui.dialogs import SketchPlaneDialog, StlDialog
 from sillycad.gui.hole_panel import HolePanel
+from sillycad.gui.hole_placement import HolePlacement
 from sillycad.gui.icons import icon
 from sillycad.gui.marking_menu import MarkingMenu
 from sillycad.gui.navigation import NavigationBar
@@ -103,6 +104,7 @@ class MainWindow(QMainWindow):
         self.undo_stack.cleanChanged.connect(lambda _clean: self._update_title())
         self._sketch_mode: SketchMode | None = None
         self._feature_panel: FeaturePanel | HolePanel | None = None
+        self._hole_placement: HolePlacement | None = None
         self._committing_feature = False
         self._preview_fitted = False
         self.path: Path | None = None  # where the document is saved
@@ -600,13 +602,12 @@ class MainWindow(QMainWindow):
     def add_solid(self, kind: type[SolidFeature]) -> None:
         if kind is Hole:
             selected = self.doc.find(self.tree.current_id() or "")
-            sketch = (
-                selected
-                if isinstance(selected, SketchFeature)
-                else next(iter(reversed(self.doc.sketches())), None)
+            sketch = selected if isinstance(selected, SketchFeature) else None
+            self._open_feature_panel(
+                self._new_solid(kind, sketch.id if sketch else ""), editing=False
             )
-        else:
-            sketch = self._default_sketch()
+            return
+        sketch = self._default_sketch()
         if sketch is None:
             QMessageBox.information(self, kind.__name__, "Draw a sketch first (New Sketch).")
             return
@@ -632,12 +633,21 @@ class MainWindow(QMainWindow):
         panel.cancelled.connect(self._close_feature_panel)
         self.model_pages.addWidget(panel)
         self.model_pages.setCurrentWidget(panel)
+        if isinstance(panel, HolePanel):
+            index = next(
+                (i for i, existing in enumerate(self.doc.features) if existing.id == feature.id),
+                len(self.doc.features),
+            )
+            body = recompute(Document(self.doc.features[:index])).shape
+            self._hole_placement = HolePlacement(
+                self.viewer, panel, body, sketches, self.statusBar().showMessage
+            )
         self.model_dock.setWindowTitle(feature.name)
         for key in _FEATURE_COMMANDS:
             self.actions[key].setEnabled(False)
         self._sync_history_actions()
         prompt = (
-            "Select a sketch center and adjust the hole."
+            "Click a planar face or choose a sketch and click a hole center."
             if isinstance(feature, Hole)
             else "Select the profile and adjust the feature."
         )
@@ -674,6 +684,8 @@ class MainWindow(QMainWindow):
                 feature = dataclasses.replace(feature, id=next_identity.id, name=next_identity.name)
                 self.model_dock.setWindowTitle(feature.name)
                 if isinstance(panel, HolePanel) and isinstance(feature, Hole):
+                    if self._hole_placement is not None:
+                        self._hole_placement.set_body(self.model.shape)
                     panel.next_feature(feature)
                 elif isinstance(panel, FeaturePanel) and not isinstance(feature, Hole):
                     panel.next_feature(feature)
@@ -691,6 +703,9 @@ class MainWindow(QMainWindow):
         panel, self._feature_panel = self._feature_panel, None
         if panel is None:
             return
+        if self._hole_placement is not None:
+            self._hole_placement.close()
+            self._hole_placement = None
         self.model_pages.setCurrentWidget(self.tree)
         self.model_pages.removeWidget(panel)
         panel.deleteLater()

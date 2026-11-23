@@ -283,6 +283,7 @@ def _describe(feature: Feature, names: dict[str, str]) -> str:
     source = f" · {names.get(feature.sketch_id, '?')}"
     if isinstance(feature, Hole):
         thread = f", {feature.thread.designation} cosmetic thread" if feature.thread else ""
+        source = source if feature.sketch_id else " · face plane"
         return f"Hole {feature.style}{thread}{source}"
     if isinstance(feature, Pad):
         extra = ", symmetric" if feature.symmetric else ", reversed" if feature.reversed else ""

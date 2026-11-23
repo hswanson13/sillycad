@@ -6,6 +6,7 @@ The 3D shape is never saved; it's recomputed from the features on open.
 """
 
 import json
+import math
 import os
 from dataclasses import asdict, fields
 from pathlib import Path
@@ -13,11 +14,11 @@ from typing import Any
 
 from sillycad.core.document import Document
 from sillycad.core.features import Feature, Hole, Pad, Pocket, Revolve, SketchFeature
-from sillycad.core.geometry import Placement
-from sillycad.core.sketch import Arc, Circle, Constraint, Line, Point, Sketch
+from sillycad.core.geometry import XYZ, Placement
+from sillycad.core.sketch import XY, Arc, Circle, Constraint, Line, Point, Sketch
 from sillycad.core.threads import ThreadSpec
 
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 SUFFIX = ".sillycad"
 
 _FEATURES: dict[str, type] = {
@@ -91,7 +92,54 @@ def _feature_from_dict(data: dict[str, Any]) -> Feature:
             data["face"] = Placement(**{k: tuple(v) for k, v in data["face"].items()})
     if cls in (Pocket, Hole) and data.get("thread") is not None:
         data["thread"] = ThreadSpec(**_only_fields(ThreadSpec, data["thread"]))
+    if cls is Hole:
+        if data.get("face") is not None:
+            face = data["face"]
+            if not isinstance(face, dict) or set(face) != {"origin", "normal", "x_dir"}:
+                raise ValueError("invalid hole face plane")
+            origin = _xyz(face["origin"])
+            normal = _xyz(face["normal"])
+            x_dir = _xyz(face["x_dir"])
+            normal_length = math.hypot(*normal)
+            x_length = math.hypot(*x_dir)
+            if normal_length < 1e-12 or x_length < 1e-12:
+                raise ValueError("invalid hole face directions")
+            n = tuple(v / normal_length for v in normal)
+            x = tuple(v / x_length for v in x_dir)
+            if (
+                math.hypot(
+                    n[1] * x[2] - n[2] * x[1],
+                    n[2] * x[0] - n[0] * x[2],
+                    n[0] * x[1] - n[1] * x[0],
+                )
+                < 1e-12
+            ):
+                raise ValueError("invalid hole face directions")
+            data["face"] = Placement(origin, normal, x_dir)
+        if data.get("center") is not None:
+            data["center"] = _xy(data["center"])
     return cls(**_only_fields(cls, data))
+
+
+def _vector(value: Any, length: int) -> tuple[float, ...]:
+    if (
+        not isinstance(value, (list, tuple))
+        or len(value) != length
+        or any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in value)
+        or not all(math.isfinite(v) for v in value)
+    ):
+        raise ValueError("invalid hole placement coordinates")
+    return tuple(value)
+
+
+def _xy(value: Any) -> XY:
+    vector = _vector(value, 2)
+    return vector[0], vector[1]
+
+
+def _xyz(value: Any) -> XYZ:
+    vector = _vector(value, 3)
+    return vector[0], vector[1], vector[2]
 
 
 def _sketch_to_dict(s: Sketch) -> dict[str, Any]:

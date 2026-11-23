@@ -114,6 +114,12 @@ class Viewer(qtViewer3d):
         self._press_at = event.position()
         super().mousePressEvent(event)
 
+    def finish_placement_click(self) -> None:
+        """Complete a consumed placement click without selecting viewport geometry."""
+        self._press_at = None
+        self._on_left_release()
+        self.cursor = "arrow"
+
     def wheelEvent(self, event: QWheelEvent) -> None:
         self.stop_camera_animation()
         super().wheelEvent(event)

@@ -145,7 +145,7 @@ def test_version_one_loads_and_hole_thread_round_trips() -> None:
     assert from_dict(old_with_pocket).features[-1].thread is None
     doc, _ = hole_document(thread=ThreadSpec("ISO metric", "M6 x 1", "6H", True, 4))
     encoded = to_dict(doc)
-    assert encoded["format_version"] == 2
+    assert encoded["format_version"] == 3
     restored = from_dict(encoded)
     assert restored == doc
     assert not recompute(restored).errors
@@ -175,3 +175,71 @@ def test_hole_on_bottom_face_uses_the_sketch_orientation() -> None:
     assert volume(result.shape) == pytest.approx(8000 - math.pi * 2**2 * 3)
     doc.delete("f3")
     assert doc.find("f4") is None
+
+
+def test_direct_face_hole_and_sketch_coordinate_hole_round_trip() -> None:
+    doc = block()
+    face = Placement((0, 0, 10), (0, 0, 1), (1, 0, 0))
+    hole = Hole("f3", "Hole", "", diameter=4, length=3, face=face, center=(10, 10))
+    doc.features.append(hole)
+    doc.next_id = 4
+    result = recompute(doc)
+    assert not result.errors
+    assert volume(result.shape) == pytest.approx(8000 - math.pi * 2**2 * 3)
+    restored = from_dict(to_dict(doc))
+    assert restored == doc
+    assert not recompute(restored).errors
+
+    sketch = SketchFeature("f4", "Top", "XY", 10)
+    doc.features.insert(2, sketch)
+    doc.replace(replace(hole, sketch_id=sketch.id, face=None, center=(20, 10)))
+    assert not recompute(doc).errors
+    assert volume(recompute(doc).shape) == pytest.approx(8000 - math.pi * 2**2 * 3)
+    assert from_dict(to_dict(doc)) == doc
+
+
+def test_version_two_sketch_hole_still_loads() -> None:
+    doc, hole = hole_document(thread=ThreadSpec("ISO metric", "M6 x 1"))
+    data = to_dict(doc)
+    data["format_version"] = 2
+    data["features"][-1].pop("face")
+    data["features"][-1].pop("center")
+    assert from_dict(data) == doc
+    assert from_dict(data).find(hole.id).point_id == hole.point_id
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("center", [1]),
+        ("center", [1, 2, 3]),
+        ("center", [1, "bad"]),
+        ("center", [1, float("nan")]),
+        ("face", {"origin": [0, 0, 10], "normal": [0, 0, 1]}),
+        ("face", {"origin": [0, 0], "normal": [0, 0, 1], "x_dir": [1, 0, 0]}),
+        ("face", {"origin": [0, 0, 10], "normal": [0, 0, 0], "x_dir": [1, 0, 0]}),
+        ("face", {"origin": [0, 0, 10], "normal": [0, 0, 1], "x_dir": [0, 0, 1]}),
+    ],
+)
+def test_malformed_direct_hole_placement_is_rejected(field: str, value: object) -> None:
+    doc = block()
+    face = Placement((0, 0, 10), (0, 0, 1), (1, 0, 0))
+    doc.features.append(Hole("f3", "Hole", "", face=face, center=(10, 10)))
+    data = to_dict(doc)
+    data["features"][-1][field] = value
+    with pytest.raises(ValueError, match="damaged"):
+        from_dict(data)
+
+
+@pytest.mark.parametrize(
+    ("face", "center"),
+    [(None, None), (None, (10, 10)), (Placement((0, 0, 10), (0, 0, 1), (1, 0, 0)), None)],
+)
+def test_incomplete_face_placement_reports_error(
+    face: Placement | None, center: tuple[float, float] | None
+) -> None:
+    doc = block()
+    doc.features.append(Hole("f3", "Hole", "", face=face, center=center))
+    result = recompute(doc)
+    assert "Click a planar face" in result.errors["f3"]
+    assert volume(result.shape) == pytest.approx(8000)

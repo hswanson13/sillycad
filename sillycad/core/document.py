@@ -121,9 +121,14 @@ def recompute(doc: Document) -> Model:
 def _apply(
     doc: Document, f: Pad | Pocket | Revolve | Hole, body: TopoDS_Shape | None
 ) -> TopoDS_Shape:
-    sk = doc.find(f.sketch_id)
-    if not isinstance(sk, SketchFeature) or sk.id not in {s.id for s in doc.sketches(f.id)}:
-        raise FeatureError("Its sketch is missing. Double-click to pick another one.")
+    if isinstance(f, Hole) and not f.sketch_id:
+        if f.face is None or f.center is None:
+            raise FeatureError("Click a planar face to place the hole.")
+        sk = SketchFeature("", "", plane="Face", face=f.face)
+    else:
+        sk = doc.find(f.sketch_id)
+        if not isinstance(sk, SketchFeature) or sk.id not in {s.id for s in doc.sketches(f.id)}:
+            raise FeatureError("Its sketch is missing. Double-click to pick another one.")
     if isinstance(f, Pocket | Hole):
         if body is None:
             raise FeatureError("Nothing to cut yet. The first solid must be a Pad or Revolve.")

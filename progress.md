@@ -155,15 +155,23 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 
 ## 🔨 U7: Holes and threads
 
-**You can now:** create holes at sketch points and record cosmetic internal-thread metadata. Core and version-2 file-format changes were approved; version-1 files still load.
+**You can now:** place and reposition holes by clicking planar faces or sketches and record cosmetic internal-thread metadata. Version-1 and version-2 files still load; saves use version 3 for face and coordinate placement.
 
 - [x] Simple blind/through holes, counterbore, spotface, and countersink; selected ISO 273 metric clearance presets.
 - [x] Cosmetic metadata for selected ISO metric, UNC/UNF/UNEF, NPT/NPTF, BSPP/BSPT, Tr and ACME sizes, plus custom size/pitch/taper; class text, handedness and depth persist through save, undo and edit.
 - [x] Tapered simple bores are geometric cones; a cylindrical Pocket cannot be marked as a tapered thread. Existing single-circle Cuts can carry parallel-thread metadata with a rough diameter check.
 - [x] Live preview, Property Panel, ribbon and marking menu, browser, undo/redo, and version-1 loading. Headless volume, invalid-input, migration and GUI tests plus an opt-in native-window test.
+- [x] Click to place or move a face hole, without a separate placement sketch. Alternatively choose a sketch and click a position or a named point. A linked sketch point follows the sketch; free coordinates, intersections and face-outline targets do not. A stored face plane does not follow the original face if it moves.
+- [x] Green key-point dots now appear in Select mode as well as while drawing and placing holes. Interior sketch-line intersections can be snapped; drawing there adds two point-on-line constraints.
+- [x] Repositioning, Cancel, Apply, undo/redo, save/reopen, old-file migration, invalid placement, side faces, curved-face errors, and viewport navigation have regression coverage.
+- [x] Ruff passes. The full headless suite has 140 passed and one native test skipped; the expanded native-window test passes separately.
 - [ ] Comprehensive standards coverage, validated class-specific tolerances and fits, other clearance standards, external threads, multi-start/profile definitions, and viewport thread callouts/appearance.
 
 **Engineering limitation:** metadata is not helical geometry and does not appear in STL. Catalogs are selected subsets; class text, pipe entrance diameter, gauge, engagement, tap drills, and manufacturing fit are not validated. Verify dimensions against the governing standards. See README's **Holes and cosmetic threads** section for exact ranges and tapered-bore limitations.
+
+## ⬜ U8: Dimension entry while drawing
+
+- [ ] Show the applicable dimensions while drawing so the user can type values immediately and use Tab to move between available dimensions.
 
 ---
 
@@ -171,7 +179,13 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 
 ### U7 (in progress)
 
-Make a block, sketch a point on its top face, finish the sketch, and choose **Hole**. Select the point, choose a hole style and depth, and optionally enable **Cosmetic thread**; for M6 x 1, use a 5 mm bore as an example. Check the preview and commit, then double-click the hole to edit and try undo/redo. To try clearance, turn the thread off and choose ISO 273 M6 / Medium (6.6 mm). For a Cut made from one circle, double-click the Cut and enable the cosmetic thread controls.
+1. Make or open a block and choose **Hole**. In Placement choose **Click a face in the viewport**, then click anywhere on its flat top face; click again elsewhere to move the preview. Hover a corner, edge midpoint, sketch point, or sketch-line intersection for a green dot. Adjust Center X/Y after choosing the face.
+2. Set diameter, depth and style; choose **OK**. Double-click the hole in the browser, click a new location, and use OK, undo and redo. Use Cancel to discard an uncommitted move. **Apply (+)** keeps the panel open to place another hole.
+3. To associate a center with a sketch point, select that sketch under Placement and click the point or select it from the Center list. A free click or intersection is positional only. In an open sketch, hover in Select mode to see green points; use Point at the crossing of two sketch lines to add a constrained intersection.
+4. Optionally enable **Cosmetic thread**; for M6 x 1, use a 5 mm bore as an example. To try clearance, turn the thread off and choose ISO 273 M6 / Medium (6.6 mm). For a Cut made from one circle, double-click the Cut and enable the cosmetic thread controls. Thread support remains partial; see the engineering limitation above.
+5. Run `ruff check .`, `ruff format --check .`, and `pytest`; on X11 / XWayland, also run `SILLYCAD_NATIVE_GUI_TESTS=1 QT_QPA_PLATFORM=xcb pytest -q tests/test_sketch_native.py`.
+
+**Panel keys:** `Ctrl+Enter` OK · `Esc` Cancel · `Ctrl+Z` cancel panel / undo · `Ctrl+Shift+Z` or `Ctrl+Y` redo.
 
 ### U6
 

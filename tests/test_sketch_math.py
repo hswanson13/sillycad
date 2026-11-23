@@ -127,6 +127,24 @@ def test_snap_constraints_follow_points_and_line_midpoints() -> None:
         constrain_snap(sketch, point, SnapTarget((0, 0), "point"))
 
 
+def test_intersecting_sketch_lines_are_key_points() -> None:
+    sketch = Sketch()
+    first = sketch.add_line(0, 2, 10, 2)
+    second = sketch.add_line(4, -3, 4, 9)
+    sketch.add_line(20, 0, 20, 1)
+    sketch.add_line(0, 4, 10, 4)
+    targets = snap_targets(sketch, [])
+    crossing = SnapTarget((4, 2), "intersection", first, second)
+    assert crossing in targets
+    assert not any(t.point == (20, 2) and t.kind == "intersection" for t in targets)
+    point = sketch.add_point(*crossing.point)
+    constrain_snap(sketch, point, crossing)
+    assert [(c.kind, c.refs) for c in sketch.constraints.values()] == [
+        ("point_on_line", [point, first]),
+        ("point_on_line", [point, second]),
+    ]
+
+
 @pytest.mark.parametrize("direction", [1, -1])
 @pytest.mark.parametrize("axis", ["horizontal", "vertical"])
 def test_line_alignment_exact_five_degree_threshold(direction: int, axis: str) -> None:

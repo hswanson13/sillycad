@@ -6,12 +6,12 @@ from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import QPoint, Signal
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QShortcut
 from PySide6.QtWidgets import QApplication, QToolButton, QWidget
 
 from sillycad.core.document import Document
 from sillycad.core.features import Hole, Pad, Pocket, Revolve, SketchFeature
-from sillycad.core.geometry import volume
+from sillycad.core.geometry import Placement, volume
 from sillycad.core.sketch import Sketch
 from sillycad.core.threads import ThreadSpec
 from sillycad.gui.hole_panel import HolePanel
@@ -190,6 +190,7 @@ def test_hole_preview_edit_clearance_thread_and_history(window: MainWindow) -> N
     window.actions["hole"].trigger()
     panel = window._feature_panel
     assert isinstance(panel, HolePanel)
+    panel.sketch.setCurrentIndex(panel.sketch.findData("f3"))
     assert panel.feature.sketch_id == "f3"
     panel.point.setCurrentIndex(panel.point.findData(point))
     panel.clearance.setCurrentIndex(panel.clearance.findData("M6"))
@@ -258,6 +259,7 @@ def test_tapered_thread_requires_explicit_depth_in_hole_panel(window: MainWindow
     window.actions["hole"].trigger()
     panel = window._feature_panel
     assert isinstance(panel, HolePanel)
+    panel.sketch.setCurrentIndex(panel.sketch.findData("f3"))
     panel.point.setCurrentIndex(panel.point.findData(point))
     panel.thread.setChecked(True)
     panel.thread.family.setCurrentText("NPT")
@@ -285,6 +287,72 @@ def test_custom_thread_editor_preserves_precision(app: QApplication) -> None:
     )
     editor = ThreadEditor(spec)
     assert editor.value() == spec
+
+
+def test_face_hole_can_be_repositioned_and_undo_redone(window: MainWindow) -> None:
+    base = SketchFeature("f1", "Base", sketch=rectangle(0, 0, 40, 20))
+    window._set_document(Document([base, Pad("f2", "Block", "f1")], 3), None)
+    window.actions["hole"].trigger()
+    panel = window._feature_panel
+    assert isinstance(panel, HolePanel)
+    assert panel.feature.sketch_id == ""
+    assert not panel.ok.isEnabled()
+    assert "Click a planar face" in panel.message.text()
+    face = Placement((0, 0, 10), (0, 0, 1), (1, 0, 0))
+    panel.set_position(face, (10, 10))
+    assert panel.ok.isEnabled() and not panel.message.text()
+    panel.set_position(face, (20, 10))
+    assert panel.feature.center == (20, 10)
+    panel.ok.click()
+    assert window.doc.find("f3").center == (20, 10)
+    assert window.doc.find("f3").face == face
+    window.edit_feature("f3")
+    panel = window._feature_panel
+    assert isinstance(panel, HolePanel)
+    panel.set_position(face, (30, 10))
+    panel.ok.click()
+    assert window.doc.find("f3").center == (30, 10)
+    window.undo_stack.undo()
+    assert window.doc.find("f3").center == (20, 10)
+    window.undo_stack.redo()
+    assert window.doc.find("f3").center == (30, 10)
+
+
+def test_hole_sketch_point_and_free_position_are_distinct(window: MainWindow) -> None:
+    base = SketchFeature("f1", "Base", sketch=rectangle(0, 0, 40, 20))
+    centers = Sketch()
+    point = centers.add_point(10, 10)
+    top = SketchFeature("f3", "Top", "XY", 10, centers)
+    window._set_document(Document([base, Pad("f2", "Block", "f1"), top], 4), None)
+    window.actions["hole"].trigger()
+    panel = window._feature_panel
+    assert isinstance(panel, HolePanel)
+    panel.sketch.setCurrentIndex(panel.sketch.findData("f3"))
+    assert not panel.ok.isEnabled() and not panel.apply.isEnabled()
+    panel.findChild(QShortcut).activated.emit()
+    assert window._feature_panel is panel and window.doc.find("f4") is None
+    panel.set_position(None, (10, 10), point)
+    assert panel.feature.point_id == point and panel.feature.center is None
+    panel.set_position(None, (20, 10))
+    assert panel.feature.point_id == "" and panel.feature.center == (20, 10)
+    panel.ok.click()
+    assert not window.model.errors
+    window.doc.find("f3").sketch.geo[point].x = 15
+    assert window.doc.find("f4").center == (20, 10)
+
+
+def test_hole_apply_updates_placement_body(window: MainWindow) -> None:
+    base = SketchFeature("f1", "Base", sketch=rectangle(0, 0, 40, 20))
+    window._set_document(Document([base, Pad("f2", "Block", "f1")], 3), None)
+    window.actions["hole"].trigger()
+    panel = window._feature_panel
+    assert isinstance(panel, HolePanel)
+    panel.set_position(Placement((0, 0, 10), (0, 0, 1), (1, 0, 0)), (10, 10))
+    panel.apply.click()
+    assert window._hole_placement.body.IsSame(window.model.shape)
+    assert window.doc.find("f3") is not None
+    panel.cancel.click()
+    assert window.doc.find("f3") is not None
 
 
 def test_apply_creates_distinct_features_and_undo_cancels_active_panel(

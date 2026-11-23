@@ -259,9 +259,10 @@ class SketchInteraction(QObject):
             self._preview(pos, bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier))
             return True
         hover = self.scene.pick(pos)
-        if hover != self.scene.hover:
+        _, target = self.scene.snap(pos)
+        if hover != self.scene.hover or target != self.scene._snap_target:
             self.scene.hover = hover
-            self.scene.redraw()
+            self.scene.set_preview([], target)
         return True
 
     def _navigate(self, start: QPointF, end: QPointF) -> None:

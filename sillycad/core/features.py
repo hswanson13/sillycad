@@ -124,7 +124,7 @@ class Pocket:
 
 @dataclass
 class Hole:
-    """A hole located at a sketch point, with optional cosmetic thread metadata."""
+    """A hole located on a sketch or stored face plane, with optional cosmetic thread metadata."""
 
     id: str
     name: str
@@ -141,6 +141,8 @@ class Hole:
     clearance_size: str = ""
     clearance_fit: str = "medium"
     thread: ThreadSpec | None = None
+    face: Placement | None = None
+    center: XY | None = None
 
 
 @dataclass
@@ -178,9 +180,12 @@ def validate_thread(thread: ThreadSpec, bore: float, length: float, *, cylindric
 
 def hole_shape(hole: Hole, sk: SketchFeature, through_all_length: float) -> TopoDS_Shape:
     """Build the material removed by a hole, in the sketch's frame."""
-    if hole.point_id != ORIGIN and not isinstance(sk.sketch.geo.get(hole.point_id), Point):
-        raise FeatureError("The hole center point is missing. Pick another sketch point.")
-    x, y = sk.sketch.point(hole.point_id)
+    if hole.center is None:
+        if hole.point_id != ORIGIN and not isinstance(sk.sketch.geo.get(hole.point_id), Point):
+            raise FeatureError("The hole center point is missing. Pick another sketch point.")
+        x, y = sk.sketch.point(hole.point_id)
+    else:
+        x, y = hole.center
     if not all(math.isfinite(v) for v in (x, y, hole.diameter, hole.length)):
         raise FeatureError("Hole dimensions and center must be finite.")
     length = through_all_length if hole.through_all else hole.length
