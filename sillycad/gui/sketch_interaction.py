@@ -7,7 +7,13 @@ from PySide6.QtGui import QMouseEvent
 
 from sillycad.core.sketch import XY, Arc, Circle, Line, Point, Sketch
 from sillycad.gui.sketch_scene import SketchScene
-from sillycad.sketch_math import add_rectangle, arc_sweep, project_to_circle
+from sillycad.sketch_math import (
+    SnapTarget,
+    add_rectangle,
+    arc_sweep,
+    constrain_snap,
+    project_to_circle,
+)
 
 _CLICKS = {"point": 1, "line": 2, "circle": 2, "arc": 3}
 
@@ -26,10 +32,10 @@ class SketchInteraction(QObject):
         self.session = scene.session
         self.viewer = scene.viewer
         self.tool = "select"
-        self.clicks: list[tuple[XY, str | None]] = []
+        self.clicks: list[tuple[XY, SnapTarget | None]] = []
         self._press: tuple[QPointF, XY, str | None] | None = None
         self._before: Sketch | None = None
-        self._rectangle: tuple[XY, str | None] | None = None
+        self._rectangle: tuple[XY, SnapTarget | None] | None = None
         self._right: QPointF | None = None
         self._right_dragged = False
         self._orbiting = False
@@ -84,6 +90,8 @@ class SketchInteraction(QObject):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is not self.viewer:
             return False
+        if event.type() in (QEvent.Type.Wheel, QEvent.Type.Resize, QEvent.Type.Leave):
+            self.scene.clear_snap()
         if event.type() in (QEvent.Type.Wheel, QEvent.Type.Resize):
             self._grid_timer.start()
             return False
@@ -138,10 +146,10 @@ class SketchInteraction(QObject):
             return True
         xy = self.scene.to_sketch(pos)
         if self.tool == "rectangle":
-            self._rectangle = self.scene.snap(pos)
+            self._rectangle = self._snap(pos)
             return True
         if self.tool != "select":
-            self.clicks.append(self.scene.snap(pos))
+            self.clicks.append(self._snap(pos))
             if len(self.clicks) == _CLICKS[self.tool]:
                 self._create_shape(pos)
             return True
@@ -256,11 +264,19 @@ class SketchInteraction(QObject):
             return False
         if self._rectangle is not None:
             start, start_snap = self._rectangle
-            end, end_snap = self.scene.snap(event.position())
+            end, end_snap = self._snap(event.position())
             self._rectangle = None
+
+            def rectangle(sketch: Sketch) -> None:
+                lines = add_rectangle(sketch, start, end)
+                first, opposite = sketch.geo[lines[0]], sketch.geo[lines[2]]
+                assert isinstance(first, Line) and isinstance(opposite, Line)
+                constrain_snap(sketch, first.p1, start_snap)
+                constrain_snap(sketch, opposite.p1, end_snap)
+
             self.session.edit(
                 "Add rectangle",
-                lambda sketch: add_rectangle(sketch, start, end, start_snap, end_snap),
+                rectangle,
             )
             self.scene.set_preview([])
         if self._before is not None:
@@ -269,8 +285,17 @@ class SketchInteraction(QObject):
         self._press = None
         return True
 
+    def _snap(self, pos: QPointF) -> tuple[XY, SnapTarget | None]:
+        point, target = self.scene.snap(pos)
+        if target and self.tool == "arc" and len(self.clicks) == 2:
+            center, start = self.clicks[0][0], self.clicks[1][0]
+            projected = project_to_circle(center, point, math.dist(center, start))
+            if math.dist(projected, point) > 1e-7:
+                return self.scene.to_sketch(pos), None
+        return point, target
+
     def _preview(self, pos: QPointF) -> None:
-        point, _ = self.scene.snap(pos)
+        point, target = self._snap(pos)
         clicks = self.clicks
         segments: list[tuple[XY, XY]] = []
         if self._rectangle is not None:
@@ -298,7 +323,7 @@ class SketchInteraction(QObject):
                     for i in range(65)
                 ]
                 segments = list(zip(points, points[1:], strict=False))
-        self.scene.set_preview(segments)
+        self.scene.set_preview(segments, target)
 
     def _create_shape(self, pos: QPointF) -> None:
         tool, clicks = self.tool, self.clicks
@@ -334,13 +359,14 @@ class SketchInteraction(QObject):
                 assert isinstance(arc, Arc)
                 ends = [arc.center, arc.start, arc.end]
             for point, snap in zip(ends, snaps, strict=True):
-                if point and snap:
-                    sketch.add_constraint("coincident", [point, snap])
+                if point:
+                    constrain_snap(sketch, point, snap)
             if ends[-1]:
                 new_end.append(ends[-1])
 
         ok = self.session.edit(f"Add {tool}", build)
         self.clicks = []
-        if ok and tool == "line" and snaps[-1] is None:
-            self.clicks = [(positions[-1], new_end[0])]
+        if ok and tool == "line" and (snaps[-1] is None or snaps[-1].kind == "reference"):
+            end = self.session.sketch.point(new_end[0])
+            self.clicks = [(end, SnapTarget(end, "point", new_end[0]))]
         self.scene.set_preview([])

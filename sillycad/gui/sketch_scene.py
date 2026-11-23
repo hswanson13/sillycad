@@ -3,13 +3,13 @@
 import math
 
 from OCC.Core.AIS import AIS_InteractiveObject, AIS_Point, AIS_Shape, AIS_TextLabel
-from OCC.Core.Aspect import Aspect_TOL_DASH, Aspect_TOL_SOLID
+from OCC.Core.Aspect import Aspect_TOL_DASH, Aspect_TOL_SOLID, Aspect_TOM_BALL
 from OCC.Core.BRep import BRep_Builder
 from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_MakeEdge
 from OCC.Core.Geom import Geom_CartesianPoint
 from OCC.Core.gp import gp_Pnt
-from OCC.Core.Graphic3d import Graphic3d_ZLayerId_Topmost
-from OCC.Core.Prs3d import Prs3d_LineAspect
+from OCC.Core.Graphic3d import Graphic3d_ZLayerId_Topmost, Graphic3d_ZLayerId_TopOSD
+from OCC.Core.Prs3d import Prs3d_LineAspect, Prs3d_PointAspect
 from OCC.Core.Quantity import Quantity_Color, Quantity_TOC_sRGB
 from OCC.Core.TopoDS import TopoDS_Compound, TopoDS_Shape
 from PySide6.QtCore import QPointF
@@ -21,7 +21,14 @@ from sillycad.core.sketch import DIMENSIONS, ORIGIN, XY, Arc, Circle, Constraint
 from sillycad.gui import theme
 from sillycad.gui.sketch_session import SketchSession
 from sillycad.gui.viewer import Viewer
-from sillycad.sketch_math import curve_distance, dimension_anchor, ray_to_sketch, sketch_to_world
+from sillycad.sketch_math import (
+    SnapTarget,
+    curve_distance,
+    dimension_anchor,
+    ray_to_sketch,
+    sketch_to_world,
+    snap_targets,
+)
 
 PICK_PIXELS = 8.0
 _GLYPHS = {
@@ -60,6 +67,7 @@ class SketchScene:
         self._signatures: dict[str, object] = {}
         self._anchors: dict[str, XY] = {}
         self._preview: list[tuple[XY, XY]] = []
+        self._snap_target: SnapTarget | None = None
         self._static_geometry()
         self.update_grid()
         self.redraw()
@@ -119,17 +127,15 @@ class SketchScene:
                 best, distance = axis, gap
         return best
 
-    def snap(self, point: QPointF) -> tuple[XY, str | None]:
-        """Snap to a sketch point or reference-outline corner if one is close."""
-        gid = self.pick(point, points_only=True)
-        if gid:
-            return self.session.sketch.point(gid), gid
-        for polyline in self.session.reference:
-            for corner in (polyline[0], polyline[-1]):
-                pos = self.screen(corner)
-                if math.hypot(point.x() - pos.x(), point.y() - pos.y()) < PICK_PIXELS:
-                    return corner, None
-        return self.to_sketch(point), None
+    def snap(self, point: QPointF) -> tuple[XY, SnapTarget | None]:
+        """Snap to the closest key point in screen pixels, independent of zoom."""
+        best, distance = None, PICK_PIXELS
+        for target in snap_targets(self.session.sketch, self.session.reference):
+            pos = self.screen(target.point)
+            gap = math.hypot(point.x() - pos.x(), point.y() - pos.y())
+            if gap < distance:
+                best, distance = target, gap
+        return (best.point, best) if best is not None else (self.to_sketch(point), None)
 
     def _display(self, key: str, item: AIS_InteractiveObject) -> None:
         item.SetZLayer(Graphic3d_ZLayerId_Topmost)
@@ -225,8 +231,8 @@ class SketchScene:
         self.context.Redisplay(item, False)
         self._signatures[key] = signature
 
-    def _point(self, key: str, xy: XY, color: str) -> None:
-        signature = (xy, color)
+    def _point(self, key: str, xy: XY, color: str, *, marker: bool = False) -> None:
+        signature = (xy, color, marker)
         if self._signatures.get(key) == signature:
             return
         geometry = Geom_CartesianPoint(gp_Pnt(*self.world(xy)))
@@ -236,7 +242,11 @@ class SketchScene:
             self._display(key, item)
         else:
             item.SetComponent(geometry)
-        item.SetColor(_color(color))
+        color_value = _color(color)
+        item.SetColor(color_value)
+        if marker:
+            item.SetZLayer(Graphic3d_ZLayerId_TopOSD)
+            item.Attributes().SetPointAspect(Prs3d_PointAspect(Aspect_TOM_BALL, color_value, 3.0))
         self.context.Redisplay(item, False)
         self._signatures[key] = signature
 
@@ -279,9 +289,17 @@ class SketchScene:
             x, y = sketch.point(curve.center)
         return x + nudge, y + nudge
 
-    def set_preview(self, segments: list[tuple[XY, XY]]) -> None:
-        """Display temporary drawing geometry on the sketch plane."""
+    def set_preview(self, segments: list[tuple[XY, XY]], snap: SnapTarget | None = None) -> None:
+        """Display temporary drawing geometry and its current snap marker."""
         self._preview = segments
+        self._snap_target = snap
+        self.redraw()
+
+    def clear_snap(self) -> None:
+        """Hide the snap marker while retaining any drawing preview."""
+        if self._snap_target is None:
+            return
+        self._snap_target = None
         self.redraw()
 
     def _auxiliary(
@@ -343,6 +361,10 @@ class SketchScene:
         sketch, session = self.session.sketch, self.session
         alive = {"grid", "axis-x", "axis-y", "reference"}
         selected = session.highlighted()
+        if self._snap_target is not None and self._snap_target not in snap_targets(
+            sketch, session.reference
+        ):
+            self._snap_target = None
 
         def color(gid: str) -> str:
             if gid in selected:
@@ -368,6 +390,9 @@ class SketchScene:
         if self._preview:
             alive.add("preview")
             self._auxiliary("preview", self._preview, theme.SKETCH_HOVER)
+        if self._snap_target is not None:
+            alive.add("snap")
+            self._point("snap", self._snap_target.point, theme.SKETCH_SNAP, marker=True)
         if session.problems:
             radius = self.viewer._display.View.Convert(8)
             rings = []

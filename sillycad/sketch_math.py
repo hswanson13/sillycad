@@ -2,11 +2,55 @@
 
 import math
 from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Literal
 
 from sillycad.core.geometry import Placement
-from sillycad.core.sketch import AXES, XY, Arc, Circle, Constraint, Line, Sketch
+from sillycad.core.sketch import AXES, ORIGIN, XY, Arc, Circle, Constraint, Line, Point, Sketch
 
 XYZ = tuple[float, float, float]
+
+
+@dataclass(frozen=True)
+class SnapTarget:
+    """A key point and the sketch reference, if any, that can constrain it."""
+
+    point: XY
+    kind: Literal["point", "midpoint", "reference"]
+    ref: str | None = None
+
+
+def snap_targets(sketch: Sketch, reference: Sequence[Sequence[XY]]) -> list[SnapTarget]:
+    """Find sketch key points and the available key points of face-outline guides."""
+    targets = [SnapTarget((0.0, 0.0), "point", ORIGIN)]
+    targets.extend(
+        SnapTarget((item.x, item.y), "point", item.id)
+        for item in sketch.geo.values()
+        if isinstance(item, Point)
+    )
+    for item in sketch.geo.values():
+        if isinstance(item, Line):
+            a, b = sketch.line_points(item.id)
+            targets.append(SnapTarget(((a[0] + b[0]) / 2, (a[1] + b[1]) / 2), "midpoint", item.id))
+    for polyline in reference:
+        if len(polyline) < 2:
+            continue
+        a, b = polyline[0], polyline[-1]
+        targets.extend((SnapTarget(a, "reference"), SnapTarget(b, "reference")))
+        if len(polyline) == 2:
+            targets.append(SnapTarget(((a[0] + b[0]) / 2, (a[1] + b[1]) / 2), "reference"))
+    return targets
+
+
+def constrain_snap(sketch: Sketch, point: str, target: SnapTarget | None) -> None:
+    """Constrain a new point to a sketch target; guides are positional only."""
+    if target is None or target.kind == "reference":
+        return
+    if target.ref is None:
+        raise ValueError("The snap target has no sketch reference.")
+    sketch.add_constraint(
+        "coincident" if target.kind == "point" else "midpoint", [point, target.ref]
+    )
 
 
 def _dot(a: XYZ, b: XYZ) -> float:

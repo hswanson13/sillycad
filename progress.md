@@ -2,9 +2,9 @@
 
 # SillyCAD Progress
 
-**Where we are:** 🎉 M1–M5, sketching on faces, and U1–U4 (the Inventor-inspired UI overhaul) are done. The headless suite has 93 passing tests; the additional native-window test passes when enabled.
+**Where we are:** 🎉 M1–M5, sketching on faces, and U1–U5 are done. The headless suite has 99 passing tests; the additional native-window test passes when enabled. U6 (straight-line inference) and U7 (holes and threads) are next.
 
-**Needs you:** try the U4 workflow below when you have time.
+**Needs you:** try the U5 workflow below and confirm before starting U6.
 
 Legend: ✅ done · 🔨 in progress · ⬜ not started
 
@@ -134,9 +134,41 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 
 **Known limitation:** choosing an individual region from overlapping circles remains deferred; the modeling core and file format are unchanged.
 
+## ✅ U5: Key-point snapping
+
+**You'll be able to:** see a green dot and snap new sketch geometry to important points, including on an extruded face.
+
+- [x] Green dot on the origin, sketch points, line and arc endpoints, circle and arc centers, and line midpoints.
+- [x] Face-outline endpoints and straight-edge midpoints snap too; the existing sketch plane and face-outline behavior are unchanged.
+- [x] Point and midpoint snaps add the corresponding sketch constraints where the new geometry has a point. Face guides and a circle's radius click are positional, not associative; arc endpoints snap only when the point is on the existing radius.
+- [x] Pixel-based picking works at different zoom levels. Markers clear when changing tools, leaving the viewport, or invalidating the target; undo / redo and drawing tools remain available.
+- [x] Ruff passes. The headless suite has 99 passed and one native-window test skipped; that native test passes separately and covers rendering the green dot, undo / redo, drawing tools and face sketches.
+
+## ⬜ U6: Straight-line inference
+
+**You'll be able to:** draw horizontal and vertical lines with green alignment feedback while retaining free-angle drawing.
+
+## ⬜ U7: Holes and threads
+
+**You'll be able to:** create ordinary and threaded holes after confirming the standards and thread representation. Core and file-format changes are approved for this milestone.
+
 ---
 
 ## How to try it
+
+### U5
+
+```bash
+conda activate sillycad
+python -m sillycad
+```
+
+1. Start a sketch and draw a line. Choose **Point** (`P`) and move near an endpoint, the line's midpoint, and the origin: a green dot should appear. Click the midpoint, then drag or dimension the line to check that the point remains at its midpoint.
+2. Try **Line** (`L`), **Rectangle**, **Circle** (`C`) and **Arc** (`A`) near sketch endpoints and centers. Use `Ctrl+Z` and `Ctrl+Shift+Z` to undo / redo, and switch to Select or move away to hide the dot.
+3. Finish the sketch, create a separate closed rectangle sketch, and make a block from it with **Extrude** (`E`) and **Join**. Start another sketch on the block's flat face. Move a drawing tool near an outline corner or the midpoint of a straight edge: the dot should appear there too. These face-guide snaps set the initial position but do not follow later body changes.
+4. Zoom in and out and try the same key points. Run `ruff check .`, `ruff format --check .`, and `pytest`; on X11 / XWayland, also run `SILLYCAD_NATIVE_GUI_TESTS=1 QT_QPA_PLATFORM=xcb pytest -q tests/test_sketch_native.py`.
+
+**Sketch keys:** `L` Line · `C` Circle · `A` Arc · `P` Point · `Esc` cancel / Select · `Ctrl+Z` undo · `Ctrl+Shift+Z` or `Ctrl+Y` redo · `Ctrl+Enter` Finish · `F5` Look At sketch.
 
 ### U4
 

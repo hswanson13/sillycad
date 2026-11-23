@@ -9,14 +9,14 @@ from OCC.Core.TopAbs import TopAbs_FACE
 from OCC.Core.TopExp import TopExp_Explorer
 from OCC.Core.TopoDS import topods
 from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QWheelEvent
+from PySide6.QtGui import QImage, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog
 
 from sillycad.core.document import Document
 from sillycad.core.features import Pad, Pocket, Revolve, SketchFeature
 from sillycad.core.geometry import face_placement, volume
-from sillycad.core.sketch import Arc, Circle, Line, Point, Sketch
+from sillycad.core.sketch import ORIGIN, Arc, Circle, Line, Point, Sketch
 from sillycad.gui.main_window import MainWindow
 from sillycad.sketch_math import add_rectangle
 
@@ -24,6 +24,122 @@ pytestmark = pytest.mark.skipif(
     not os.environ.get("SILLYCAD_NATIVE_GUI_TESTS") or not os.environ.get("DISPLAY"),
     reason="requires an explicitly enabled native display",
 )
+
+
+def exercise_key_point_snapping(window: MainWindow, tmp_path: Path) -> None:
+    """Exercise key-point feedback and constraints on an extruded face."""
+    base = Sketch()
+    add_rectangle(base, (0, 0), (60, 40))
+    window._set_document(
+        Document([SketchFeature("s1", "Sketch1", sketch=base), Pad("p1", "Pad1", "s1")]),
+        None,
+    )
+    window._start_sketch("XY", 10, None)
+    QTest.qWait(550)
+    mode = window._sketch_mode
+    assert mode is not None
+    mode.session.edit("Reference line", lambda sketch: sketch.add_line(10, 15, 40, 15))
+    line = next(g for g in mode.session.sketch.geo.values() if isinstance(g, Line))
+    mode.actions["point"].trigger()
+
+    midpoint = mode.scene.screen((25, 15)).toPoint()
+    QTest.mouseMove(window.viewer, midpoint + QPoint(3, 2), delay=20)
+    target = mode.scene._snap_target
+    assert target is not None and target.kind == "midpoint" and target.ref == line.id
+    assert "snap" in mode.scene._objects
+    image_path = tmp_path / "snap.png"
+    assert window.viewer._display.View.Dump(str(image_path))
+    image = QImage(str(image_path))
+    assert not image.isNull()
+    green_pixels = 0
+    for y in range(midpoint.y() - 7, midpoint.y() + 8):
+        for x in range(midpoint.x() - 7, midpoint.x() + 8):
+            color = image.pixelColor(x, y)
+            if color.green() > 100 and color.green() > 1.3 * max(color.red(), color.blue()):
+                green_pixels += 1
+    assert green_pixels >= 20
+    QTest.mouseClick(window.viewer, Qt.MouseButton.LeftButton, pos=midpoint + QPoint(3, 2))
+    point_id = next(
+        c.refs[0] for c in mode.session.sketch.constraints.values() if c.kind == "midpoint"
+    )
+    assert mode.session.sketch.point(point_id) == pytest.approx((25, 15))
+    mode.session.undo_stack.undo()
+    assert point_id not in mode.session.sketch.geo
+    mode.session.undo_stack.redo()
+    assert point_id in mode.session.sketch.geo
+
+    guide_midpoint = mode.scene.screen((0, 20)).toPoint()
+    QTest.mouseMove(window.viewer, guide_midpoint + QPoint(2, 2), delay=20)
+    target = mode.scene._snap_target
+    assert target is not None and target.kind == "reference"
+    assert target.point == pytest.approx((0, 20))
+    old_constraints = len(mode.session.sketch.constraints)
+    QTest.mouseClick(window.viewer, Qt.MouseButton.LeftButton, pos=guide_midpoint + QPoint(2, 2))
+    assert len(mode.session.sketch.constraints) == old_constraints
+
+    origin = mode.scene.screen((0, 0)).toPoint()
+    QTest.mouseMove(window.viewer, origin + QPoint(2, 2), delay=20)
+    target = mode.scene._snap_target
+    assert target is not None and target.ref == ORIGIN
+    mode.actions["select"].trigger()
+    assert mode.scene._snap_target is None
+    assert "snap" not in mode.scene._objects
+
+    mode.actions["line"].trigger()
+    QTest.mouseClick(
+        window.viewer, Qt.MouseButton.LeftButton, pos=mode.scene.screen((10, 15)).toPoint()
+    )
+    QTest.mouseClick(
+        window.viewer, Qt.MouseButton.LeftButton, pos=mode.scene.screen((60, 20)).toPoint()
+    )
+    new_line = [g for g in mode.session.sketch.geo.values() if isinstance(g, Line)][-1]
+    assert mode.session.sketch.point(new_line.p2) == pytest.approx((60, 20))
+    assert any(
+        c.kind == "coincident" and set(c.refs) == {new_line.p1, line.p1}
+        for c in mode.session.sketch.constraints.values()
+    )
+    assert mode.interaction.clicks
+
+    mode.actions["circle"].trigger()
+    QTest.mouseClick(window.viewer, Qt.MouseButton.LeftButton, pos=origin)
+    QTest.mouseClick(
+        window.viewer, Qt.MouseButton.LeftButton, pos=mode.scene.screen((8, 8)).toPoint()
+    )
+    circle = next(g for g in mode.session.sketch.geo.values() if isinstance(g, Circle))
+    assert any(
+        c.kind == "coincident" and set(c.refs) == {circle.center, ORIGIN}
+        for c in mode.session.sketch.constraints.values()
+    )
+
+    mode.session.edit("Another line", lambda sketch: sketch.add_line(15, 30, 35, 30))
+    midpoint_line = [g for g in mode.session.sketch.geo.values() if isinstance(g, Line)][-1]
+    mode.actions["rectangle"].trigger()
+    QTest.mousePress(
+        window.viewer, Qt.MouseButton.LeftButton, pos=mode.scene.screen((25, 30)).toPoint()
+    )
+    QTest.mouseRelease(
+        window.viewer, Qt.MouseButton.LeftButton, pos=mode.scene.screen((35, 35)).toPoint()
+    )
+    assert any(
+        c.kind == "midpoint" and midpoint_line.id in c.refs
+        for c in mode.session.sketch.constraints.values()
+    )
+
+    mode.session.edit("Arc target", lambda sketch: sketch.add_point(55, 10))
+    mode.actions["arc"].trigger()
+    for point in ((50, 5), (55, 5)):
+        QTest.mouseClick(
+            window.viewer, Qt.MouseButton.LeftButton, pos=mode.scene.screen(point).toPoint()
+        )
+    QTest.mouseMove(window.viewer, mode.scene.screen((55, 10)).toPoint(), delay=20)
+    assert mode.scene._snap_target is None
+    QTest.mouseClick(
+        window.viewer, Qt.MouseButton.LeftButton, pos=mode.scene.screen((55, 10)).toPoint()
+    )
+    arc = next(g for g in mode.session.sketch.geo.values() if isinstance(g, Arc))
+    assert not any(arc.end in c.refs for c in mode.session.sketch.constraints.values())
+
+    mode.actions["finish"].trigger()
 
 
 def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -216,6 +332,7 @@ def test_native_sketch_on_face(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         assert "triangles" in window.statusBar().currentMessage()
         exercise_feature_panels(window)
         exercise_drawing_tools(window)
+        exercise_key_point_snapping(window, tmp_path)
     finally:
         if window._sketch_mode is not None:
             window._sketch_mode.session.undo_stack.setClean()

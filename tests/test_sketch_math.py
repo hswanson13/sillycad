@@ -5,15 +5,18 @@ import math
 import pytest
 
 from sillycad.core.geometry import BASE_PLANES, Placement
-from sillycad.core.sketch import ORIGIN, Line, Sketch
+from sillycad.core.sketch import ORIGIN, Arc, Circle, Line, Point, Sketch
 from sillycad.core.solver import solve
 from sillycad.sketch_math import (
+    SnapTarget,
     add_rectangle,
     arc_sweep,
+    constrain_snap,
     curve_distance,
     infer_dimension,
     ray_to_sketch,
     sketch_to_world,
+    snap_targets,
 )
 
 
@@ -78,3 +81,46 @@ def test_rectangle_is_four_constrained_lines_and_snaps() -> None:
         )
     with pytest.raises(ValueError, match="nonzero"):
         add_rectangle(sketch, (0, 0), (0, 10))
+
+
+def test_snap_targets_include_sketch_key_points_and_face_outline() -> None:
+    sketch = Sketch()
+    line_id = sketch.add_line(2, 4, 12, 8)
+    circle_id = sketch.add_circle(20, 10, 4)
+    arc_id = sketch.add_arc(30, 10, 35, 10, 30, 15)
+    line, circle, arc = sketch.geo[line_id], sketch.geo[circle_id], sketch.geo[arc_id]
+    assert isinstance(line, Line) and isinstance(circle, Circle) and isinstance(arc, Arc)
+    targets = snap_targets(sketch, [[(40, 0), (50, 0)], [(60, 0), (65, 5), (70, 0)], []])
+    assert SnapTarget((0, 0), "point", ORIGIN) in targets
+    assert SnapTarget((2, 4), "point", line.p1) in targets
+    assert SnapTarget((7, 6), "midpoint", line_id) in targets
+    assert SnapTarget((20, 10), "point", circle.center) in targets
+    assert SnapTarget((30, 10), "point", arc.center) in targets
+    assert SnapTarget((35, 10), "point", arc.start) in targets
+    assert SnapTarget((40, 0), "reference") in targets
+    assert SnapTarget((45, 0), "reference") in targets
+    assert SnapTarget((65, 0), "reference") not in targets
+
+
+def test_snap_constraints_follow_points_and_line_midpoints() -> None:
+    sketch = Sketch()
+    line_id = sketch.add_line(0, 0, 20, 0)
+    existing = sketch.geo[line_id]
+    assert isinstance(existing, Line)
+    point = sketch.add_point(10, 0)
+    constrain_snap(sketch, point, SnapTarget((10, 0), "midpoint", line_id))
+    center = sketch.add_point(0, 0)
+    constrain_snap(sketch, center, SnapTarget((0, 0), "point", ORIGIN))
+    guide_point = sketch.add_point(30, 0)
+    constrain_snap(sketch, guide_point, SnapTarget((30, 0), "reference"))
+    assert [c.kind for c in sketch.constraints.values()] == ["midpoint", "coincident"]
+    end = sketch.geo[existing.p2]
+    assert isinstance(end, Point)
+    end.x = 30
+    assert solve(sketch).ok
+    a, b = sketch.line_points(line_id)
+    assert sketch.point(point) == pytest.approx(((a[0] + b[0]) / 2, (a[1] + b[1]) / 2))
+    assert sketch.point(center) == pytest.approx((0, 0))
+    assert sketch.point(guide_point) == pytest.approx((30, 0))
+    with pytest.raises(ValueError, match="no sketch reference"):
+        constrain_snap(sketch, point, SnapTarget((0, 0), "point"))
