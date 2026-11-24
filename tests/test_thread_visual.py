@@ -15,7 +15,7 @@ from sillycad.core.fileio import from_dict, to_dict
 from sillycad.core.geometry import Placement, volume
 from sillycad.core.sketch import Circle, Sketch
 from sillycad.core.threads import THREAD_FAMILIES, ThreadSpec, thread_sizes
-from sillycad.gui.thread_visual import thread_linework
+from sillycad.gui.thread_visual import _MAX_FEATURE_TURNS, _SEGMENTS_PER_TURN, thread_linework
 from sillycad.sketch_math import add_rectangle
 
 
@@ -125,7 +125,7 @@ def test_long_thread_strokes_are_bounded_and_cover_both_surviving_ends(pitch: fl
     model = recompute(doc)
     assert not model.errors
     edges = edges_of(thread_linework(doc, model)[0])
-    assert 0 < len(edges) <= 192
+    assert 0 < len(edges) <= _MAX_FEATURE_TURNS * _SEGMENTS_PER_TURN
     depths = []
     for edge in edges:
         curve = BRepAdaptor_Curve(edge)
@@ -177,10 +177,10 @@ def test_excess_thread_displays_are_bounded_and_reported(
     )
     model = recompute(doc)
     assert not model.errors
-    monkeypatch.setattr("sillycad.gui.thread_visual._MAX_TOTAL_SEGMENTS", 2)
+    monkeypatch.setattr("sillycad.gui.thread_visual._MAX_TOTAL_SEGMENTS", 2 * _SEGMENTS_PER_TURN)
     strokes = thread_linework(doc, model)
     assert len(strokes) == 2
-    assert all(len(edges_of(shape)) == 1 for shape in strokes)
+    assert all(len(edges_of(shape)) == _SEGMENTS_PER_TURN for shape in strokes)
     assert "1 were omitted" in caplog.text
 
 
@@ -271,4 +271,5 @@ def test_threaded_hole_styles_extents_directions_and_round_trips(
     assert not model.errors
     assert 0 < volume(model.shape) < 8000
     strokes = thread_linework(restored, model)
-    assert len(strokes) == 1 and 0 < len(edges_of(strokes[0])) <= 192
+    assert len(strokes) == 1
+    assert 0 < len(edges_of(strokes[0])) <= 4 * _SEGMENTS_PER_TURN  # 4 mm of M6 x 1

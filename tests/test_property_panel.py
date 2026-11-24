@@ -183,36 +183,66 @@ def test_join_cut_options_preview_and_edit_lock(window: MainWindow) -> None:
     assert window.doc.find(pocket.id).through_all
 
 
-def test_hole_preview_edit_clearance_thread_and_history(window: MainWindow) -> None:
+def block_with_centers() -> tuple[Document, str]:
     base = SketchFeature("f1", "Base", sketch=rectangle(0, 0, 40, 20))
     centers = Sketch()
     point = centers.add_point(10, 10)
     centers.add_point(20, 10)
     placement = SketchFeature("f3", "Centers", "XY", 10, centers)
-    window._set_document(Document([base, Pad("f2", "Block", "f1"), placement], next_id=4), None)
+    return Document([base, Pad("f2", "Block", "f1"), placement], next_id=4), point
+
+
+def open_hole_panel(window: MainWindow) -> HolePanel:
+    """Start the Hole command on the block's center sketch point."""
+    doc, point = block_with_centers()
+    window._set_document(doc, None)
     window.actions["hole"].trigger()
     panel = window._feature_panel
     assert isinstance(panel, HolePanel)
     panel.sketch.setCurrentIndex(panel.sketch.findData("f3"))
-    assert panel.feature.sketch_id == "f3"
     panel.point.setCurrentIndex(panel.point.findData(point))
-    panel.clearance.setCurrentIndex(panel.clearance.findData("M6"))
+    return panel
+
+
+def test_hole_types_show_only_their_own_settings(window: MainWindow) -> None:
+    panel = open_hole_panel(window)
+    assert panel.types.value() == "simple" and panel.seat.value() == "simple"
+    assert panel.size_group.isVisibleTo(panel) and not panel.thread_group.isVisibleTo(panel)
+    assert not panel.fastener.isVisibleTo(panel) and not panel.seat_group.isVisibleTo(panel)
+    panel.seat.buttons["countersink"].click()
+    assert panel.seat_group.isVisibleTo(panel)
+    assert not panel.seat_form.isRowVisible(panel.head_depth)
+    assert panel.seat_form.isRowVisible(panel.angle)
+    panel.seat.buttons["simple"].click()
+    panel.types.buttons["clearance"].click()
+    assert panel.fastener.isVisibleTo(panel) and not panel.size_group.isVisibleTo(panel)
+    assert panel.clearance.currentData() == "M6"  # the 6 mm hole's fastener
     assert panel.diameter.value() == pytest.approx(6.6)
-    assert not panel.diameter.isEnabled()
     assert volume(window.viewer.shape) == pytest.approx(8000 - 3.141592653589793 * 3.3**2 * 5)
-    panel.thread.setChecked(True)
-    assert "clearance" in panel.message.text()
-    panel.clearance.setCurrentIndex(0)
-    panel.diameter.setValue(5)
-    panel.thread.thread_class.setText("6H")
-    panel.thread.left_hand.setChecked(True)
+    panel.types.buttons["tapped"].click()
+    assert panel.thread_group.isVisibleTo(panel) and not panel.size_group.isVisibleTo(panel)
+    assert panel.thread.designation.currentText() == "M6 x 1"
+    assert panel.diameter.value() == pytest.approx(5)
+    assert "Tap drill Ø5 mm" in panel.thread.info.text()
     assert not panel.message.text()
     assert len(window.viewer.threads) == 1
+    panel.types.buttons["simple"].click()
+    assert window.viewer.threads == []
+    assert panel._current_feature().thread is None
+
+
+def test_hole_preview_edit_thread_and_history(window: MainWindow) -> None:
+    panel = open_hole_panel(window)
+    panel.types.buttons["tapped"].click()
+    panel.thread.thread_class.setCurrentText("6H")
+    panel.thread.hand.setCurrentIndex(1)
+    assert not panel.message.text()
     panel.ok.click()
     hole = window.doc.find("f4")
     assert isinstance(hole, Hole)
-    assert hole.thread.designation == "M6 x 1"
+    assert hole.thread.designation == "M6 x 1" and hole.diameter == pytest.approx(5)
     assert hole.thread.thread_class == "6H" and hole.thread.left_hand
+    assert not hole.clearance_size
     window.undo_stack.undo()
     assert window.doc.find("f4") is None
     assert window.viewer.threads == []
@@ -221,70 +251,50 @@ def test_hole_preview_edit_clearance_thread_and_history(window: MainWindow) -> N
     window.edit_feature("f4")
     panel = window._feature_panel
     assert isinstance(panel, HolePanel)
-    assert panel.thread.isChecked()
-    assert panel.thread.thread_class.text() == "6H"
-    panel.style.setCurrentIndex(panel.style.findData("counterbore"))
+    assert panel.types.value() == "tapped"
+    assert panel.thread.thread_class.currentText() == "6H"
+    assert panel.thread.hand.currentText() == "Left hand"
+    panel.seat.buttons["counterbore"].click()
     panel.apply.click()
     assert window.doc.find("f4").style == "counterbore"
     panel.cancel.click()
     assert window.doc.find("f4").style == "counterbore"
 
 
-def test_existing_circle_cut_cosmetic_thread_panel(window: MainWindow) -> None:
-    base = SketchFeature("f1", "Base", sketch=rectangle(0, 0, 40, 20))
-    circle = Sketch()
-    circle.add_circle(10, 10, 2.5)
-    profile = SketchFeature("f3", "Circle", "XY", 10, circle)
-    cut = Pocket("f4", "Cut", "f3", length=5)
-    window._set_document(Document([base, Pad("f2", "Block", "f1"), profile, cut], next_id=5), None)
-    window.edit_feature("f4")
-    panel = window._feature_panel
-    assert isinstance(panel, FeaturePanel)
-    panel.thread.setChecked(True)
-    panel.thread.thread_class.setText("6H")
-    assert not panel.message.text()
-    panel.ok.click()
-    saved = window.doc.find("f4")
-    assert isinstance(saved, Pocket)
-    assert saved.thread.designation == "M6 x 1"
-    assert saved.thread.thread_class == "6H"
-    assert volume(window.model.shape) == pytest.approx(8000 - 3.141592653589793 * 2.5**2 * 5)
-
-
-def test_tapered_thread_requires_explicit_depth_in_hole_panel(window: MainWindow) -> None:
-    base = SketchFeature("f1", "Base", sketch=rectangle(0, 0, 40, 20))
-    centers = Sketch()
-    point = centers.add_point(10, 10)
-    window._set_document(
-        Document(
-            [base, Pad("f2", "Block", "f1"), SketchFeature("f3", "Centers", "XY", 10, centers)],
-            next_id=4,
-        ),
-        None,
-    )
-    window.actions["hole"].trigger()
-    panel = window._feature_panel
-    assert isinstance(panel, HolePanel)
-    panel.sketch.setCurrentIndex(panel.sketch.findData("f3"))
-    panel.point.setCurrentIndex(panel.point.findData(point))
-    panel.thread.setChecked(True)
-    panel.thread.family.setCurrentText("NPT")
-    panel.thread.designation.setCurrentText("1/8-27 NPT")
-    assert "explicit thread depth" in panel.message.text()
-    panel.diameter.setValue(8)
-    panel.thread.full_depth.setChecked(False)
+def test_taper_tapped_hole_offers_pipe_threads_and_suggests_an_entrance(
+    window: MainWindow,
+) -> None:
+    panel = open_hole_panel(window)
+    panel.seat.buttons["counterbore"].click()
+    panel.types.buttons["taper"].click()
+    assert panel.seat.value() == "simple"
+    assert not panel.seat.buttons["counterbore"].isEnabled()
+    kinds = [panel.thread.kind.itemText(i) for i in range(panel.thread.kind.count())]
+    assert kinds == ["NPT Pipe", "BSP Pipe", "Custom"]
+    assert not panel.thread.form.isRowVisible(panel.thread.full_depth)
+    assert panel.thread.form.isRowVisible(panel.thread.depth)
+    panel.thread.size.setCurrentText("1/8")
+    assert panel.thread.designation.currentText() == "1/8-27 NPT"
+    assert panel.diameter.isEnabled()
+    assert panel.diameter.value() == pytest.approx(8.61)
     panel.thread.depth.setValue(4)
     assert not panel.message.text()
+    panel.diameter.setValue(8.5)  # the suggestion can be overridden
     panel.ok.click()
     hole = window.doc.find("f4")
     assert isinstance(hole, Hole)
     assert hole.thread.family == "NPT" and hole.thread.depth == 4
+    assert hole.diameter == pytest.approx(8.5)
     assert not window.model.errors
+    window.edit_feature("f4")
+    panel = window._feature_panel
+    assert isinstance(panel, HolePanel)
+    assert panel.types.value() == "taper"
+    assert panel.diameter.value() == pytest.approx(8.5)  # a saved entrance is kept
+    panel.cancel.click()
 
 
-def test_tapered_choice_on_countersink_reports_errors_and_can_be_corrected(
-    window: MainWindow,
-) -> None:
+def test_tapped_hole_lists_only_parallel_threads(window: MainWindow) -> None:
     base = SketchFeature("f1", "Base", sketch=rectangle(0, 0, 40, 20))
     hole = Hole(
         "f3",
@@ -302,12 +312,13 @@ def test_tapered_choice_on_countersink_reports_errors_and_can_be_corrected(
     window.edit_feature("f3")
     panel = window._feature_panel
     assert isinstance(panel, HolePanel)
-    panel.thread.family.setCurrentText("NPT")
-    assert "explicit thread depth" in panel.message.text()
-    panel.thread.full_depth.setChecked(False)
-    assert "simple hole" in panel.message.text()
-    panel.style.setCurrentIndex(panel.style.findData("simple"))
-    assert not panel.message.text()
+    kinds = [panel.thread.kind.itemText(i) for i in range(panel.thread.kind.count())]
+    assert "NPT Pipe" not in kinds and "BSP Pipe" in kinds
+    panel.thread.kind.setCurrentText("BSP Pipe")
+    designations = [
+        panel.thread.designation.itemText(i) for i in range(panel.thread.designation.count())
+    ]
+    assert all(text.startswith("G ") for text in designations)
     panel.cancel.click()
     assert window.doc.find("f3") == hole
     assert not window.model.errors
@@ -322,8 +333,9 @@ def test_custom_thread_editor_preserves_precision(app: QApplication) -> None:
         custom_pitch=0.3175,
         custom_taper=0.0625,
     )
-    editor = ThreadEditor(spec)
+    editor = ThreadEditor(spec, tapered=True)
     assert editor.value() == spec
+    assert editor.form.isRowVisible(editor.major) and not editor.form.isRowVisible(editor.size)
 
 
 def test_face_hole_can_be_repositioned_and_undo_redone(window: MainWindow) -> None:
@@ -556,10 +568,12 @@ def test_extrude_defaults_to_new_circle_with_open_guide_and_warns(window: MainWi
     assert "click ok" in panel.profile_notice.text().lower()
     assert volume(window.viewer.shape) == pytest.approx(8000 + 100000 * 3.141592653589793)
     panel.cut.click()
-    panel.thread.setChecked(True)
-    assert "incompatible" in panel.message.text().lower()
+    panel.thread_group.setChecked(True)
+    assert panel.thread.kind.currentText() == "Custom"
+    assert "No standard thread fits" in panel.thread.info.text()
+    assert "custom thread designation" in panel.message.text()
     assert not panel.profile_notice.text()
-    panel.thread.setChecked(False)
+    panel.thread_group.setChecked(False)
     assert not panel.message.text() and panel.profile_notice.text()
     panel.join.click()
     panel.sketch.setCurrentIndex(panel.sketch.findData("f1"))
@@ -612,3 +626,107 @@ def test_close_cancel_keeps_active_panel(
     window.closeEvent(event)
     assert not event.isAccepted()
     assert window._feature_panel is panel
+
+
+def circle_cut_document(*radii: float, thread: ThreadSpec | None = None) -> Document:
+    base = SketchFeature("f1", "Base", sketch=rectangle(0, 0, 40, 20))
+    features: list = [base, Pad("f2", "Block", "f1")]
+    for index, radius in enumerate(radii):
+        sketch = Sketch()
+        sketch.add_circle(10, 10, radius)
+        features.append(SketchFeature(f"f{3 + index}", f"Circle{index}", "XY", 10, sketch))
+    cut_id = f"f{3 + len(radii)}"
+    features.append(Pocket(cut_id, "Cut", "f3", through_all=True, thread=thread))
+    return Document(features, 4 + len(radii))
+
+
+def test_cut_thread_lists_only_sizes_that_fit_its_circle(window: MainWindow) -> None:
+    window._set_document(circle_cut_document(2, 4.25), None)
+    window.edit_feature("f5")
+    panel = window._feature_panel
+    assert isinstance(panel, FeaturePanel)
+    assert panel.thread_group.title() == "Thread (Ø4 mm hole)"
+    panel.thread_group.setChecked(True)
+    sizes = [panel.thread.size.itemText(i) for i in range(panel.thread.size.count())]
+    assert sizes == ["M4.5", "M5"]
+    assert panel.thread.designation.currentText() == "M5 x 0.8"
+    assert not panel.message.text()
+    assert len(window.viewer.threads) == 1
+    panel.thread.kind.setCurrentText("Unified Inch")
+    assert panel.thread.designation.currentText() == "#10-24 UNC"
+    panel.thread.kind.setCurrentText("ISO Metric")
+    panel.sketch.setCurrentIndex(panel.sketch.findData("f4"))
+    assert panel.thread_group.title() == "Thread (Ø8.5 mm hole)"
+    assert panel.thread.designation.currentText() == "M10 x 1.5"
+    panel.ok.click()
+    assert window.doc.find("f5").thread.designation == "M10 x 1.5"
+    assert volume(window.model.shape) == pytest.approx(8000 - 3.141592653589793 * 4.25**2 * 10)
+
+
+def test_mismatched_cut_thread_is_corrected_when_edited(window: MainWindow) -> None:
+    window._set_document(circle_cut_document(2, thread=ThreadSpec("ISO metric", "M2 x 0.25")), None)
+    assert "Try M5 x 0.8" in window.model.errors["f4"]
+    window.edit_feature("f4")
+    panel = window._feature_panel
+    assert isinstance(panel, FeaturePanel)
+    assert panel.thread.designation.currentText() == "M5 x 0.8"
+    assert "M2 x 0.25 does not fit here" in panel.thread.info.text()
+    assert not panel.message.text()
+    panel.ok.click()
+    assert not window.model.errors
+
+
+def test_existing_circle_cut_cosmetic_thread_panel(window: MainWindow) -> None:
+    base = SketchFeature("f1", "Base", sketch=rectangle(0, 0, 40, 20))
+    circle = Sketch()
+    circle.add_circle(10, 10, 2.5)
+    profile = SketchFeature("f3", "Circle", "XY", 10, circle)
+    cut = Pocket("f4", "Cut", "f3", length=5)
+    window._set_document(Document([base, Pad("f2", "Block", "f1"), profile, cut], next_id=5), None)
+    window.edit_feature("f4")
+    panel = window._feature_panel
+    assert isinstance(panel, FeaturePanel)
+    panel.thread_group.setChecked(True)
+    assert panel.thread.thread_class.currentText() == "6H"
+    assert not panel.message.text()
+    panel.ok.click()
+    saved = window.doc.find("f4")
+    assert isinstance(saved, Pocket)
+    assert saved.thread.designation == "M6 x 1"
+    assert saved.thread.thread_class == "6H"
+    assert volume(window.model.shape) == pytest.approx(8000 - 3.141592653589793 * 2.5**2 * 5)
+
+
+def test_hole_thread_follows_the_fastener_size(window: MainWindow) -> None:
+    panel = open_hole_panel(window)
+    panel.diameter.setValue(10)
+    panel.types.buttons["tapped"].click()
+    assert panel.thread.size.currentText() == "M10"
+    assert panel.thread.designation.currentText() == "M10 x 1.5"
+    assert panel.diameter.value() == pytest.approx(8.5)
+    designations = [
+        panel.thread.designation.itemText(i) for i in range(panel.thread.designation.count())
+    ]
+    assert designations == ["M10 x 1.5", "M10 x 1.25", "M10 x 1", "M10 x 0.75"]
+    panel.thread.designation.setCurrentText("M10 x 1.25")
+    assert panel.diameter.value() == pytest.approx(8.75)
+    panel.thread.kind.setCurrentText("Unified Inch")
+    assert panel.thread.designation.currentText() == "3/8-16 UNC"
+    panel.thread.kind.setCurrentText("ISO Metric")
+    assert panel.thread.designation.currentText() == "M10 x 1.5"
+    panel.types.buttons["clearance"].click()
+    assert panel.clearance.currentData() == "M10"
+    panel.types.buttons["tapped"].click()
+    assert panel.thread.designation.currentText() == "M10 x 1.5"
+    panel.types.buttons["simple"].click()
+    panel.diameter.setValue(12)
+    panel.types.buttons["tapped"].click()
+    assert panel.thread.designation.currentText() == "M12 x 1.75"
+    panel.thread.size.setCurrentText("M8")
+    assert panel.thread.designation.currentText() == "M8 x 1.25"
+    assert not panel.message.text()
+    panel.ok.click()
+    hole = window.doc.find("f4")
+    assert isinstance(hole, Hole)
+    assert hole.diameter == pytest.approx(6.75) and not hole.clearance_size
+    assert len(window.viewer.threads) == 1

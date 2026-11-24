@@ -10,7 +10,14 @@ from sillycad.core.features import Hole, Pad, Pocket, SketchFeature
 from sillycad.core.fileio import from_dict, to_dict
 from sillycad.core.geometry import Placement, volume
 from sillycad.core.sketch import Sketch
-from sillycad.core.threads import ThreadSpec, resolve_thread
+from sillycad.core.threads import (
+    ThreadSpec,
+    resolve_thread,
+    size_for_bore,
+    size_for_nominal,
+    thread_sizes,
+    thread_type,
+)
 
 
 def block() -> Document:
@@ -95,6 +102,80 @@ def test_circle_pocket_threads_and_rejections() -> None:
     sketch.add_circle(20, 10, 2.5)
     doc.replace(pocket)
     assert "one circular profile" in recompute(doc).errors["f4"]
+
+
+@pytest.mark.parametrize(
+    ("family", "bore", "designation"),
+    [
+        ("ISO metric", 2.5, "M3 x 0.5"),
+        ("ISO metric", 3.3, "M4 x 0.7"),
+        ("ISO metric", 4.0, "M5 x 0.8"),  # coarse pitch beats an exact fine-pitch fit
+        ("ISO metric", 5.0, "M6 x 1"),
+        ("ISO metric", 6.8, "M8 x 1.25"),
+        ("ISO metric", 8.5, "M10 x 1.5"),
+        ("ISO metric", 10.2, "M12 x 1.75"),
+        ("UNC", 5.1, "1/4-20 UNC"),
+        ("UNF", 5.5, "1/4-28 UNF"),
+        ("Tr", 9.0, "Tr 12 x 3"),
+    ],
+)
+def test_existing_bore_suggests_the_tapped_size(family: str, bore: float, designation: str) -> None:
+    size = size_for_bore(thread_sizes(family), bore)
+    assert size is not None and size.designation == designation
+    assert size.fits(bore)
+
+
+def test_bore_and_nominal_suggestions_handle_families_without_a_fit() -> None:
+    metric = thread_sizes("ISO metric")
+    assert size_for_bore(metric, 100) is None
+    assert size_for_bore(thread_sizes("NPT"), 8) is None  # tapered: entrance is entered
+    assert size_for_bore((), 5) is None
+    assert size_for_nominal(metric, 6).designation == "M6 x 1"
+    assert size_for_nominal(metric, 9.9).designation == "M10 x 1.5"
+    assert size_for_nominal(thread_sizes("UNC"), 6).designation == "1/4-20 UNC"
+    assert size_for_nominal(thread_sizes("NPT"), 6).designation == "1/16-27 NPT"
+    assert size_for_nominal((), 6) is None
+
+
+def test_a_bore_fits_only_sizes_it_can_be_tapped_for() -> None:
+    fitting = {size.designation for size in thread_sizes("ISO metric") if size.fits(4)}
+    assert fitting == {"M4.5 x 0.75", "M4.5 x 0.5", "M5 x 0.8"}
+    m6 = resolve_thread(ThreadSpec("ISO metric", "M6 x 1"))
+    assert m6.bore_range == pytest.approx((4.7, 5.35))
+    assert m6.fits(m6.tap_drill) and not m6.fits(6) and not m6.fits(4.5)
+    npt = resolve_thread(ThreadSpec("NPT", "1/8-27 NPT"))
+    assert npt.bore_range is None and npt.tap_drill == pytest.approx(8.61)
+    assert resolve_thread(ThreadSpec("BSPT", "Rc 1/8")).tap_drill == pytest.approx(8.566)
+    assert thread_type("UNF") == "Unified Inch" and thread_type("Custom") == "Custom"
+    assert all(size.nominal for size in thread_sizes("UNC"))
+
+
+def test_tapped_hole_bore_follows_the_thread_not_the_entered_diameter() -> None:
+    doc, hole = hole_document(diameter=6, length=5, thread=ThreadSpec("ISO metric", "M6 x 1"))
+    model = recompute(doc)
+    assert not model.errors
+    assert volume(model.shape) == pytest.approx(8000 - math.pi * 2.5**2 * 5)
+    doc.replace(
+        replace(hole, thread=ThreadSpec("Custom", "Special", custom_major=8, custom_pitch=1))
+    )
+    assert volume(recompute(doc).shape) == pytest.approx(8000 - math.pi * 3.5**2 * 5)
+    doc.replace(replace(hole, thread=ThreadSpec("NPT", "1/8-27 NPT", depth=4), diameter=8))
+    assert not recompute(doc).errors  # tapered threads keep the entered entrance diameter
+
+
+def test_mismatched_cut_thread_explains_and_suggests_a_size() -> None:
+    doc = block()
+    sketch = Sketch()
+    sketch.add_circle(10, 10, 2)
+    doc.features.append(SketchFeature("f3", "Circle", "XY", 10, sketch))
+    doc.features.append(Pocket("f4", "Cut", "f3", 5, thread=ThreadSpec("ISO metric", "M2 x 0.25")))
+    message = recompute(doc).errors["f4"]
+    assert "4 mm bore does not fit M2 x 0.25: it needs 1.68 to 1.84 mm" in message
+    assert "Try M5 x 0.8" in message
+    doc.replace(replace(doc.find("f4"), thread=ThreadSpec("ISO metric", "M5 x 0.8")))
+    model = recompute(doc)
+    assert not model.errors
+    assert volume(model.shape) == pytest.approx(8000 - math.pi * 4 * 5)
 
 
 @pytest.mark.parametrize("style", ["counterbore", "spotface", "countersink"])

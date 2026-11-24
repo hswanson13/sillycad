@@ -30,7 +30,13 @@ from sillycad.core.geometry import (
 )
 from sillycad.core.profiles import curve_edge, find_profiles
 from sillycad.core.sketch import ORIGIN, X_AXIS, XY, Y_AXIS, Arc, Circle, Line, Point, Sketch
-from sillycad.core.threads import ThreadSpec, clearance_diameter, resolve_thread
+from sillycad.core.threads import (
+    ThreadSpec,
+    clearance_diameter,
+    resolve_thread,
+    size_for_bore,
+    thread_sizes,
+)
 
 
 class FeatureError(Exception):
@@ -173,9 +179,35 @@ def validate_thread(thread: ThreadSpec, bore: float, length: float, *, cylindric
         raise FeatureError("Thread depth cannot exceed the hole depth.")
     if cylindrical and size.taper:
         raise FeatureError("A tapered thread needs a tapered Hole, not a cylindrical Pocket.")
-    if size.major is not None and not size.major - 2 * size.pitch < bore <= size.major:
-        raise FeatureError("Bore diameter is incompatible with the nominal thread size and pitch.")
+    if (limits := size.bore_range) and not size.fits(bore):
+        better = (
+            size_for_bore(thread_sizes(thread.family), bore) if size.family != "Custom" else None
+        )
+        hint = f" Try {better.designation}." if better else ""
+        raise FeatureError(
+            f"A {bore:g} mm bore does not fit {size.designation}: it needs "
+            f"{limits[0]:.3g} to {limits[1]:.3g} mm.{hint}"
+        )
     return size.taper
+
+
+def bore_diameter(hole: Hole) -> float:
+    """The drilled diameter: a clearance preset, a parallel thread's tap drill, or as entered.
+
+    Tapered threads keep the entered entrance diameter.
+    """
+    try:
+        if hole.clearance_size:
+            if hole.thread:
+                raise FeatureError("A clearance hole cannot also be threaded.")
+            return clearance_diameter(hole.clearance_size, hole.clearance_fit)
+        if hole.thread is not None:
+            size = resolve_thread(hole.thread)
+            if not size.taper and size.tap_drill:
+                return size.tap_drill
+    except ValueError as exc:
+        raise FeatureError(str(exc)) from exc
+    return hole.diameter
 
 
 def hole_shape(hole: Hole, sk: SketchFeature, through_all_length: float) -> TopoDS_Shape:
@@ -190,14 +222,7 @@ def hole_shape(hole: Hole, sk: SketchFeature, through_all_length: float) -> Topo
         raise FeatureError("Hole dimensions and center must be finite.")
     length = through_all_length if hole.through_all else hole.length
     _check_length(length)
-    diameter = hole.diameter
-    if hole.clearance_size:
-        if hole.thread:
-            raise FeatureError("A clearance hole cannot also be threaded.")
-        try:
-            diameter = clearance_diameter(hole.clearance_size, hole.clearance_fit)
-        except ValueError as exc:
-            raise FeatureError(str(exc)) from exc
+    diameter = bore_diameter(hole)
     if diameter <= 0:
         raise FeatureError("Hole diameter must be greater than zero.")
     if hole.style not in ("simple", "counterbore", "spotface", "countersink"):

@@ -123,9 +123,9 @@ def _feature_from_dict(data: dict[str, Any]) -> Feature:
 
 def _vector(value: Any, length: int) -> tuple[float, ...]:
     if (
-        not isinstance(value, (list, tuple))
+        not isinstance(value, list | tuple)
         or len(value) != length
-        or any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in value)
+        or any(isinstance(v, bool) or not isinstance(v, int | float) for v in value)
         or not all(math.isfinite(v) for v in value)
     ):
         raise ValueError("invalid hole placement coordinates")

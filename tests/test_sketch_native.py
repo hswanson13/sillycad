@@ -19,7 +19,7 @@ from sillycad.core.features import Feature, Hole, Pad, Pocket, Revolve, SketchFe
 from sillycad.core.fileio import load, save
 from sillycad.core.geometry import Placement, face_placement, volume
 from sillycad.core.sketch import ORIGIN, Arc, Circle, Line, Point, Sketch
-from sillycad.core.threads import THREAD_FAMILIES, ThreadSpec
+from sillycad.core.threads import ThreadSpec
 from sillycad.gui import theme
 from sillycad.gui.hole_panel import HolePanel
 from sillycad.gui.main_window import UI_FONTS, MainWindow
@@ -705,27 +705,29 @@ def exercise_long_thread_stress(window: MainWindow, app: QApplication) -> None:
     timer.setInterval(1)
     timer.timeout.connect(lambda: ticks.append(True))
     timer.start()
-    for family in THREAD_FAMILIES:
-        panel.thread.family.setCurrentText(family)
-        if family != "Custom":
-            panel.thread.designation.setCurrentIndex(panel.thread.designation.count() - 1)
-        QTest.qWait(2)
-        assert window._feature_panel is panel
+    for kind in ("tapped", "taper"):
+        panel.types.buttons[kind].click()
+        for index in range(panel.thread.kind.count()):
+            panel.thread.kind.setCurrentIndex(index)
+            if panel.thread.kind.currentText() != "Custom":
+                panel.thread.size.setCurrentIndex(panel.thread.size.count() - 1)
+            QTest.qWait(2)
+            assert window._feature_panel is panel
     assert ticks
     timer.stop()
 
-    panel.thread.family.setCurrentText("NPT")
-    assert "explicit thread depth" in panel.message.text()
-    panel.thread.full_depth.setChecked(False)
+    panel.thread.kind.setCurrentText("NPT Pipe")
+    panel.thread.size.setCurrentText("1/8")
     panel.thread.depth.setValue(20)
     assert not panel.message.text()
-    panel.thread.family.setCurrentText("Custom")
+    panel.types.buttons["tapped"].click()
+    panel.thread.kind.setCurrentText("Custom")
     assert "designation" in panel.message.text()
     panel.thread.custom_designation.setText("Fine")
     panel.thread.major.setValue(5)
     panel.thread.pitch.setValue(0.001)
     panel.thread.full_depth.setChecked(True)
-    panel.thread.left_hand.setChecked(True)
+    panel.thread.hand.setCurrentIndex(1)
     assert not panel.message.text()
     panel.ok.click()
     hole = window.doc.find("h11")
@@ -742,8 +744,8 @@ def exercise_long_thread_stress(window: MainWindow, app: QApplication) -> None:
         window.edit_feature("h11")
         panel = window._feature_panel
         assert isinstance(panel, HolePanel)
-        panel.thread.family.setCurrentText("NPT")
-        assert "explicit thread depth" in panel.message.text()
+        panel.types.buttons["taper"].click()
+        assert panel.thread.kind.currentText() == "NPT Pipe"
         panel.cancel.click()
         assert window._feature_panel is None and not window.model.errors
         app.processEvents()
@@ -783,9 +785,8 @@ def exercise_hole_panel(window: MainWindow, tmp_path: Path, app: QApplication) -
     assert isinstance(panel, HolePanel)
     panel.sketch.setCurrentIndex(panel.sketch.findData("f3"))
     panel.point.setCurrentIndex(panel.point.findData(point))
-    panel.style.setCurrentIndex(panel.style.findData("counterbore"))
-    panel.thread.setChecked(True)
-    panel.diameter.setValue(5)
+    panel.seat.buttons["counterbore"].click()
+    panel.types.buttons["tapped"].click()
     QTest.qWait(150)
     assert not panel.message.text()
     viewport_path = tmp_path / "u7-viewport.png"

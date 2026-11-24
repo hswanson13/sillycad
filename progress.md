@@ -2,7 +2,7 @@
 
 # SillyCAD Progress
 
-**Where we are:** 🎉 M1–M5, sketching on faces, and U1–U6 are done. U7 holes and partial cosmetic thread support are implemented; comprehensive threading remains in progress. U8 live dimensions, U9 navigation/thread-display fixes and U10 open-guide extrusion are done. The headless suite has 437 passing tests; the native-window integration test passes separately.
+**Where we are:** 🎉 M1–M5, sketching on faces, and U1–U6 are done. U7 holes and partial cosmetic thread support are implemented; comprehensive threading remains in progress. U8 live dimensions, U9 navigation/thread-display fixes and U10 open-guide extrusion are done. The headless suite has 456 passing tests; the native-window integration test passes separately.
 
 **Needs you:** try the U10 workflow below and review the threading limitations before relying on it for a design.
 
@@ -166,6 +166,7 @@ Legend: ✅ done · 🔨 in progress · ⬜ not started
 - [x] Repositioning, Cancel, Apply, undo/redo, save/reopen, old-file migration, invalid placement, side faces, curved-face errors, and viewport navigation have regression coverage.
 - [x] Ruff passes. The full headless suite has 140 passed and one native test skipped; the expanded native-window test passes separately.
 - [x] Threaded Holes and circular Cuts display illustrative, non-selectable strokes on surviving bore walls, including in live previews and sketch mode. They do not change the body or STL.
+- [x] Inventor-style Hole panel: Type (Simple, Clearance, Tapped, Taper Tapped) and Seat buttons, Behavior, and only the selected type's section. Threads are chosen by Thread type, Size and Designation; tapped holes are drilled at the tap drill, and round Cuts offer only sizes that fit their bore. Thread strokes are drawn on the surviving bore faces as a continuous helix, and the preview no longer stalls (2.4 s down to 0.04 s for the strokes on a test part).
 - [ ] Comprehensive standards coverage, validated class-specific tolerances and fits, other clearance standards, external threads, multi-start/profile definitions, and viewport thread callouts.
 
 **Engineering limitation:** metadata is not helical geometry and does not appear in STL. Catalogs are selected subsets; class text, pipe entrance diameter, gauge, engagement, tap drills, and manufacturing fit are not validated. Verify dimensions against the governing standards. See README's **Holes and cosmetic threads** section for exact ranges and tapered-bore limitations.

@@ -1,16 +1,27 @@
 """Cosmetic internal-thread specifications and selected standard sizes.
 
 The catalog contains nominal dimensions, not tolerance limits or manufacturing
-certification. Pipe-thread bores require an explicitly chosen entrance diameter.
+certification. Tapered pipe threads suggest a common entrance drill that the
+user can override.
 """
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
+
+# Thread engagement limits for a tapped bore, as multiples of the pitch below the
+# major diameter: about 100% of a 60° thread at the low end, 50% at the high end.
+_DEEPEST, _SHALLOWEST = 1.3, 0.65
 
 
 @dataclass(frozen=True)
 class ThreadSize:
-    """A catalog designation, with millimetre dimensions and diametral taper per length."""
+    """A catalog designation, with millimetre dimensions and diametral taper per length.
+
+    ``nominal`` is the size label shared by every pitch of one diameter (``M6``,
+    ``1/4``), ``fine`` marks a pitch finer than the coarse series (fine metric, UNF,
+    UNEF), and ``drill`` is the suggested entrance diameter of a tapered thread.
+    """
 
     family: str
     designation: str
@@ -18,6 +29,28 @@ class ThreadSize:
     major: float | None
     basic_minor: float | None
     taper: float = 0.0
+    fine: bool = False
+    nominal: str = ""
+    drill: float | None = None
+
+    @property
+    def tap_drill(self) -> float | None:
+        """The bore to drill: major minus pitch for parallel threads, else the suggestion."""
+        if self.taper or self.major is None:
+            return self.drill
+        return round(self.major - self.pitch, 3)
+
+    @property
+    def bore_range(self) -> tuple[float, float] | None:
+        """The smallest and largest bore a parallel thread can be tapped into."""
+        if self.taper or self.major is None:
+            return None
+        return self.major - _DEEPEST * self.pitch, self.major - _SHALLOWEST * self.pitch
+
+    def fits(self, bore: float) -> bool:
+        """Whether this thread can be tapped into ``bore``; tapered threads are not checked."""
+        limits = self.bore_range
+        return limits is None or limits[0] - 1e-9 <= bore <= limits[1] + 1e-9
 
 
 @dataclass(frozen=True)
@@ -99,10 +132,11 @@ _UNIFIED = (
     ("1", 1.000, 8, 12, 20),
 )
 
-# Nominal pipe size and TPI. These are not bore diameters.
+# Nominal pipe size, TPI and the common tap drill (in) without reaming.
 _NPT = (
-    ("1/16", 27), ("1/8", 27), ("1/4", 18), ("3/8", 18), ("1/2", 14),
-    ("3/4", 14), ("1", 11.5), ("1 1/4", 11.5), ("1 1/2", 11.5), ("2", 11.5),
+    ("1/16", 27, 0.246), ("1/8", 27, 0.339), ("1/4", 18, 0.4375), ("3/8", 18, 0.578),
+    ("1/2", 14, 0.719), ("3/4", 14, 0.922), ("1", 11.5, 1.156), ("1 1/4", 11.5, 1.5),
+    ("1 1/2", 11.5, 1.734), ("2", 11.5, 2.219),
 )  # fmt: skip
 
 # Pipe size, TPI, basic major and minor diameters at the reference plane (mm).
@@ -134,51 +168,73 @@ THREAD_FAMILIES = (
 )
 
 
-def _catalog() -> tuple[ThreadSize, ...]:
-    sizes: list[ThreadSize] = []
+def _catalog() -> Iterable[ThreadSize]:
     for diameter, pitches in _METRIC.items():
         for pitch in pitches:
-            sizes.append(
-                ThreadSize(
-                    "ISO metric",
-                    f"M{diameter:g} x {pitch:g}",
-                    pitch,
-                    diameter,
-                    diameter - 1.0825317547 * pitch,
-                )
+            yield ThreadSize(
+                "ISO metric",
+                f"M{diameter:g} x {pitch:g}",
+                pitch,
+                diameter,
+                diameter - 1.0825317547 * pitch,
+                fine=pitch != pitches[0],
+                nominal=f"M{diameter:g}",
             )
-    for label, inches, coarse, fine, extra_fine in _UNIFIED:
-        for family, tpi in (("UNC", coarse), ("UNF", fine), ("UNEF", extra_fine)):
+    for label, inches, *tpis in _UNIFIED:
+        for family, tpi in zip(("UNC", "UNF", "UNEF"), tpis, strict=True):
             if tpi:
                 pitch, diameter = 25.4 / tpi, 25.4 * inches
-                sizes.append(
-                    ThreadSize(
-                        family,
-                        f"{label}-{tpi} {family}",
-                        pitch,
-                        diameter,
-                        diameter - 1.0825317547 * pitch,
-                    )
+                minor = diameter - 1.0825317547 * pitch
+                yield ThreadSize(
+                    family,
+                    f"{label}-{tpi} {family}",
+                    pitch,
+                    diameter,
+                    minor,
+                    fine=family != "UNC",
+                    nominal=label,
                 )
-    for label, tpi in _NPT:
+    for label, tpi, drill in _NPT:
         for family in ("NPT", "NPTF"):
-            sizes.append(
-                ThreadSize(family, f"{label}-{tpi:g} {family}", 25.4 / tpi, None, None, 1 / 16)
+            yield ThreadSize(
+                family,
+                f"{label}-{tpi:g} {family}",
+                25.4 / tpi,
+                None,
+                None,
+                1 / 16,
+                nominal=label,
+                drill=round(25.4 * drill, 2),
             )
     for label, tpi, major, minor in _BSP:
-        sizes.append(ThreadSize("BSPP", f"G {label}", 25.4 / tpi, major, minor))
-        sizes.append(ThreadSize("BSPT", f"Rc {label}", 25.4 / tpi, major, None, 1 / 16))
-    for diameter, pitch in _TRAPEZOIDAL:
-        sizes.append(
-            ThreadSize("Tr", f"Tr {diameter:g} x {pitch:g}", pitch, diameter, diameter - pitch)
+        pitch = 25.4 / tpi
+        yield ThreadSize("BSPP", f"G {label}", pitch, major, minor, nominal=label)
+        yield ThreadSize(
+            "BSPT", f"Rc {label}", pitch, major, None, 1 / 16, nominal=label, drill=minor
         )
+    for diameter, pitch in _TRAPEZOIDAL:
+        yield ThreadSize(
+            "Tr", f"Tr {diameter:g} x {pitch:g}", pitch, diameter, diameter - pitch,
+            nominal=f"Tr {diameter:g}",
+        )  # fmt: skip
     for label, inches, tpi in _ACME:
         pitch, diameter = 25.4 / tpi, 25.4 * inches
-        sizes.append(ThreadSize("ACME", f"{label}-{tpi} ACME", pitch, diameter, diameter - pitch))
-    return tuple(sizes)
+        yield ThreadSize(
+            "ACME", f"{label}-{tpi} ACME", pitch, diameter, diameter - pitch, nominal=label
+        )
 
 
-THREAD_SIZES = _catalog()
+THREAD_SIZES = tuple(_catalog())
+
+# Thread types as Inventor groups them, mapped to the stored families.
+THREAD_TYPES = {
+    "ISO Metric": ("ISO metric",),
+    "Unified Inch": ("UNC", "UNF", "UNEF"),
+    "NPT Pipe": ("NPT", "NPTF"),
+    "BSP Pipe": ("BSPP", "BSPT"),
+    "Trapezoidal": ("Tr",),
+    "ACME": ("ACME",),
+}
 
 # ISO 273 selected clearance diameters: fine, medium and coarse (mm).
 CLEARANCES = {
@@ -207,6 +263,33 @@ def thread_sizes(family: str) -> tuple[ThreadSize, ...]:
     if family not in THREAD_FAMILIES:
         raise ValueError(f"Unknown thread family: {family}.")
     return tuple(size for size in THREAD_SIZES if size.family == family)
+
+
+def thread_type(family: str) -> str:
+    """The Inventor-style thread type that contains a stored family."""
+    return next((name for name, members in THREAD_TYPES.items() if family in members), family)
+
+
+def size_for_nominal(sizes: Iterable[ThreadSize], diameter: float) -> ThreadSize | None:
+    """The coarsest size whose nominal diameter is closest to ``diameter``.
+
+    Sizes without a major diameter (NPT) fall back to the first one.
+    """
+    sizes = tuple(sizes)
+    majors = {size: size.major for size in sizes if size.major is not None}
+    if not majors:
+        return next(iter(sizes), None)
+    return min(majors, key=lambda size: abs(majors[size] - diameter))
+
+
+def size_for_bore(sizes: Iterable[ThreadSize], bore: float) -> ThreadSize | None:
+    """The size that fits an existing ``bore``, coarse pitch first, closest tap drill."""
+    drills = {
+        size: size.tap_drill
+        for size in sizes
+        if not size.taper and size.tap_drill is not None and size.fits(bore)
+    }
+    return min(drills, key=lambda size: (size.fine, abs(drills[size] - bore)), default=None)
 
 
 def resolve_thread(spec: ThreadSpec) -> ThreadSize:

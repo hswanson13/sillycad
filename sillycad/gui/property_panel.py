@@ -1,7 +1,8 @@
 """Dockable controls for creating and editing solid features."""
 
 import copy
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from contextlib import suppress
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -14,14 +15,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
 from sillycad.core.features import Pad, Pocket, Revolve, SketchFeature
-from sillycad.core.profiles import ProfileError, analyze_profiles
+from sillycad.core.profiles import ProfileError, analyze_profiles, sole_circular_profile
 from sillycad.core.sketch import Line
+from sillycad.core.threads import ThreadSize, size_for_bore
 from sillycad.gui.thread_editor import ThreadEditor
 from sillycad.gui.tooltips import tooltip
 
@@ -123,12 +124,17 @@ class FeaturePanel(QWidget):
                 "through_all" if isinstance(feature, Pocket) and feature.through_all else "distance"
             )
             self._extrude_choices(direction_value, extent_value)
-            self.thread = ThreadEditor(feature.thread if isinstance(feature, Pocket) else None)
-            thread_scroll = QScrollArea()
-            thread_scroll.setWidgetResizable(True)
-            thread_scroll.setMaximumHeight(180)
-            thread_scroll.setWidget(self.thread)
-            layout.addWidget(thread_scroll)
+            spec = feature.thread if isinstance(feature, Pocket) else None
+            self.thread_group = QGroupBox("Thread")
+            self.thread_group.setCheckable(True)
+            self.thread_group.setChecked(spec is not None)
+            self.thread_group.setToolTip(
+                tooltip("Thread", "Mark a round Cut as a tapped hole (cosmetic only)")
+            )
+            thread_layout = QVBoxLayout(self.thread_group)
+            self.thread = ThreadEditor(spec, allowed=self._fits_bore, suggest=self._suggest_thread)
+            thread_layout.addWidget(self.thread)
+            layout.addWidget(self.thread_group)
         else:
             axis_group = QGroupBox("Axis")
             form = QFormLayout(axis_group)
@@ -183,16 +189,40 @@ class FeaturePanel(QWidget):
         shortcut.setKeys([QKeySequence("Ctrl+Return"), QKeySequence("Ctrl+Enter")])
         shortcut.activated.connect(self._accept)
 
-        self.sketch.currentIndexChanged.connect(self._changed)
+        self.sketch.currentIndexChanged.connect(self._sketch_changed)
         self.extent.currentIndexChanged.connect(self._changed)
         if isinstance(feature, Pad | Pocket):
             self.operations.buttonClicked.connect(self._operation_changed)
             self.direction.currentIndexChanged.connect(self._changed)
             self.length.valueChanged.connect(self._changed)
             self.thread.changed.connect(self._changed)
+            self.thread_group.toggled.connect(self._changed)
         else:
             self.axis.currentIndexChanged.connect(self._changed)
             self.angle.valueChanged.connect(self._changed)
+        self._changed()
+
+    def _bore(self) -> float | None:
+        """The diameter of the sketch's only circle, which a thread must fit."""
+        sketch = self._sketches.get(self.sketch.currentData())
+        with suppress(ProfileError):
+            if sketch and (circle := sole_circular_profile(sketch.sketch)):
+                return 2 * circle.radius
+        return None
+
+    def _fits_bore(self, size: ThreadSize) -> bool:
+        bore = self._bore()
+        return bore is not None and not size.taper and size.fits(bore)
+
+    def _suggest_thread(self, sizes: Sequence[ThreadSize]) -> ThreadSize | None:
+        bore = self._bore()
+        return size_for_bore(sizes, bore) if bore is not None else None
+
+    def _sketch_changed(self) -> None:
+        if isinstance(self.feature, Pad | Pocket):
+            self.thread.blockSignals(True)
+            self.thread.set_filter(self._fits_bore)
+            self.thread.blockSignals(False)
         self._changed()
 
     def _extrude_choices(self, direction: str, extent: str) -> None:
@@ -237,7 +267,13 @@ class FeaturePanel(QWidget):
         feature = self.feature
         sketch_id = self.sketch.currentData()
         if isinstance(feature, Pad | Pocket):
-            self.thread.setEnabled(self.cut.isChecked())
+            self.thread_group.setVisible(self.cut.isChecked())
+            self.thread_group.setEnabled(self._bore() is not None)
+            self.thread_group.setTitle(
+                f"Thread (Ø{self._bore():g} mm hole)"
+                if self._bore() is not None
+                else "Thread (needs one circle)"
+            )
             direction = self.direction.currentData()
             if direction != "symmetric":
                 self._last_reversed = direction == "flipped"
@@ -259,7 +295,7 @@ class FeaturePanel(QWidget):
                     length=self.length.value(),
                     through_all=self.extent.currentData() == "through_all",
                     reversed=self._last_reversed,
-                    thread=self.thread.value(),
+                    thread=self.thread.value() if self.thread_group.isChecked() else None,
                 )
         else:
             self._fill_axes(self.axis.currentData() or feature.axis)
@@ -312,4 +348,5 @@ def _number_box(value: float, maximum: float, suffix: str) -> QDoubleSpinBox:
     box.setDecimals(3)
     box.setSuffix(suffix)
     box.setValue(value)
+    box.setKeyboardTracking(False)  # preview once the value is entered, not per keystroke
     return box
